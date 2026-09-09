@@ -88,6 +88,32 @@ public final class NettyPreconditions {
   }
 
   /**
+   * Primitive overload to avoid boxing on hot paths. Only formats on failure.
+   */
+  public static void checkFrame(boolean b, String message, int arg1, int arg2) {
+    if (!b) {
+      if (MinecraftDecoder.DEBUG) {
+        throw new CorruptedFrameException(Strings.lenientFormat(message, arg1, arg2));
+      } else {
+        throw BAD;
+      }
+    }
+  }
+
+  /**
+   * Primitive overload to avoid boxing on hot paths. Only formats on failure.
+   */
+  public static void checkFrame(boolean b, String message, int arg1) {
+    if (!b) {
+      if (MinecraftDecoder.DEBUG) {
+        throw new CorruptedFrameException(Strings.lenientFormat(message, arg1));
+      } else {
+        throw BAD;
+      }
+    }
+  }
+
+  /**
    * Throws {@link CorruptedFrameException} if {@code b} is false.
    *
    * @param b       the expression to check

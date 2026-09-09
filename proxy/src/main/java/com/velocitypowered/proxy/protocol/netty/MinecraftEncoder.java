@@ -34,6 +34,10 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
   private final ProtocolUtils.Direction direction;
   private StateRegistry state;
   private StateRegistry.PacketRegistry.ProtocolRegistry registry;
+  // Single-entry cache: same packet classes repeat back-to-back (KeepAlive, chat, etc.).
+  // Confined to the owning EventLoop thread, no synchronization needed.
+  private Class<? extends MinecraftPacket> lastPacketClass;
+  private int lastPacketId;
 
   /**
    * Creates a new {@code MinecraftEncoder} encoding packets for the specified {@code direction}.
@@ -47,9 +51,20 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
     this.state = StateRegistry.HANDSHAKE;
   }
 
+  private int getPacketIdCached(MinecraftPacket msg) {
+    Class<? extends MinecraftPacket> clazz = msg.getClass();
+    if (clazz == lastPacketClass) {
+      return lastPacketId;
+    }
+    int id = this.registry.getPacketId(msg);
+    lastPacketClass = clazz;
+    lastPacketId = id;
+    return id;
+  }
+
   @Override
   protected void encode(ChannelHandlerContext ctx, MinecraftPacket msg, ByteBuf out) {
-    int packetId = this.registry.getPacketId(msg);
+    int packetId = getPacketIdCached(msg);
     ProtocolUtils.writeVarInt(out, packetId);
     msg.encode(out, direction, registry.version);
   }
@@ -62,15 +77,31 @@ public class MinecraftEncoder extends MessageToByteEncoder<MinecraftPacket> {
       return super.allocateBuffer(ctx, msg, preferDirect);
     }
 
-    int packetId = this.registry.getPacketId(msg);
+    int packetId = getPacketIdCached(msg);
     int totalHint = ProtocolUtils.varIntBytes(packetId) + hint;
+    // Cap absurd hints from malformed packets: allocator will grow on demand.
+    if (totalHint > 65536) {
+      totalHint = 65536;
+    }
     return preferDirect ? ctx.alloc().ioBuffer(totalHint) : ctx.alloc().heapBuffer(totalHint);
   }
 
+  /**
+   * Sets the protocol version used for encoding.
+   *
+   * @param protocolVersion the protocol version to use
+   */
   public void setProtocolVersion(final ProtocolVersion protocolVersion) {
     this.registry = state.getProtocolRegistry(direction, protocolVersion);
+    // Packet IDs depend on registry (state+version): invalidate cached mapping.
+    this.lastPacketClass = null;
   }
 
+  /**
+   * Sets the protocol state used for encoding.
+   *
+   * @param state the state to use
+   */
   public void setState(StateRegistry state) {
     this.state = state;
     this.setProtocolVersion(registry.version);

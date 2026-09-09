@@ -79,9 +79,19 @@ public class MinecraftVarintFrameDecoder extends ByteToMessageDecoder {
       return;
     }
 
-    // skip any runs of 0x00 we might find
+    // Fast path: 99.9% of packets start with a non-NUL byte, avoid forEachByte scan setup.
+    if (!in.isReadable()) {
+      return;
+    }
+    int readerIndex = in.readerIndex();
+    int packetStart;
+    if (in.getByte(readerIndex) != 0) {
+      packetStart = readerIndex;
+    } else {
+      // skip any runs of 0x00 we might find
+      packetStart = in.forEachByte(FIND_NON_NUL);
+    }
     int wlen = in.readableBytes();
-    int packetStart = in.forEachByte(FIND_NON_NUL);
     if (packetStart == -1) {
       in.clear();
       // Apply a more strict check in serverbound direction, we really shouldn't be seeing this many 0x00s
@@ -136,8 +146,8 @@ public class MinecraftVarintFrameDecoder extends ByteToMessageDecoder {
   }
 
   private boolean validateServerboundHandshakePacket(ByteBuf in, int length) throws Exception {
-    StateRegistry.PacketRegistry.ProtocolRegistry registry =
-        state.getProtocolRegistry(direction, ProtocolVersion.MINIMUM_VERSION);
+    // Reuse the pre-resolved HANDSHAKE registry: this path only runs in HANDSHAKE state.
+    StateRegistry.PacketRegistry.ProtocolRegistry registry = this.registry;
 
     final int index = in.readerIndex();
     final int packetId = readRawVarInt21(in);

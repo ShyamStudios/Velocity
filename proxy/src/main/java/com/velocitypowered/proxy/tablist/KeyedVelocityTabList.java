@@ -48,7 +48,7 @@ public class KeyedVelocityTabList implements InternalTabList {
   protected final ConnectedPlayer player;
   protected final MinecraftConnection connection;
   protected final ProxyServer proxyServer;
-  protected final Map<UUID, KeyedVelocityTabListEntry> entries = new ConcurrentHashMap<>();
+  protected final Map<UUID, KeyedVelocityTabListEntry> entries = new ConcurrentHashMap<>(8);
 
   /**
    * Creates a new VelocityTabList.

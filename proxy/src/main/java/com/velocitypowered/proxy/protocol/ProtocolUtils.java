@@ -282,8 +282,13 @@ public enum ProtocolUtils {
     return readString(buf, cap, length);
   }
 
+  private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
+
   private static String readString(ByteBuf buf, int cap, int length) {
     checkFrame(length >= 0, "Got a negative-length string (%s)", length);
+    if (length == 0) {
+      return "";
+    }
     // `cap` is interpreted as a UTF-8 character length. To cover the full Unicode plane, we must
     // consider the length of a UTF-8 character, which can be up to 3 bytes. We do an initial
     // sanity check and then check again to make sure our optimistic guess was good.
@@ -358,15 +363,26 @@ public enum ProtocolUtils {
   public static Key[] readKeyArray(ByteBuf buf) {
     int length = readVarInt(buf);
     checkFrame(length >= 0, "Got a negative-length array (%s)", length);
+    if (length == 0) {
+      return new Key[0];
+    }
     checkFrame(buf.isReadable(length),
         "Trying to read an array that is too long (wanted %s, only have %s)", length,
         buf.readableBytes());
-    Key[] ret = new Key[length];
-
-    for (int i = 0; i < ret.length; i++) {
-      ret[i] = ProtocolUtils.readKey(buf);
+    // Direct allocation for normal sizes (fast path); incremental growth only for huge
+    // (likely malformed) lengths so a bad length can't force a huge array upfront.
+    if (length <= 1024) {
+      Key[] ret = new Key[length];
+      for (int i = 0; i < ret.length; i++) {
+        ret[i] = ProtocolUtils.readKey(buf);
+      }
+      return ret;
     }
-    return ret;
+    List<Key> list = new ArrayList<>(16);
+    for (int i = 0; i < length; i++) {
+      list.add(ProtocolUtils.readKey(buf));
+    }
+    return list.toArray(new Key[0]);
   }
 
   /**
@@ -397,6 +413,9 @@ public enum ProtocolUtils {
   public static byte[] readByteArray(ByteBuf buf, int cap) {
     int length = readVarInt(buf);
     checkFrame(length >= 0, "Got a negative-length array (%s)", length);
+    if (length == 0) {
+      return EMPTY_BYTE_ARRAY;
+    }
     checkFrame(length <= cap, "Bad array size (got %s, maximum is %s)", length, cap);
     checkFrame(buf.isReadable(length),
         "Trying to read an array that is too long (wanted %s, only have %s)", length,
@@ -420,14 +439,28 @@ public enum ProtocolUtils {
   public static int[] readIntegerArray(ByteBuf buf) {
     int len = readVarInt(buf);
     checkFrame(len >= 0, "Got a negative-length integer array (%s)", len);
+    if (len == 0) {
+      return new int[0];
+    }
     checkFrame(buf.isReadable(len),
         "Trying to read an array that is too long (wanted %s, only have %s)", len,
         buf.readableBytes());
-    int[] array = new int[len];
-    for (int i = 0; i < len; i++) {
-      array[i] = readVarInt(buf);
+    // Bounded direct allocation for normal sizes avoids Integer boxing; huge (likely
+    // malformed) lengths fall back to incremental growth so a bad length can't force a
+    // huge array before per-element reads fail.
+    if (len <= 1024) {
+      int[] array = new int[len];
+      for (int i = 0; i < len; i++) {
+        array[i] = readVarInt(buf);
+      }
+      return array;
     }
-    return array;
+    it.unimi.dsi.fastutil.ints.IntArrayList list =
+        new it.unimi.dsi.fastutil.ints.IntArrayList(Math.min(len, 16));
+    for (int i = 0; i < len; i++) {
+      list.add(readVarInt(buf));
+    }
+    return list.toIntArray();
   }
 
   /**
@@ -543,14 +576,26 @@ public enum ProtocolUtils {
   public static String[] readStringArray(ByteBuf buf) {
     int length = readVarInt(buf);
     checkFrame(length >= 0, "Got a negative-length array (%s)", length);
+    if (length == 0) {
+      return new String[0];
+    }
     checkFrame(buf.isReadable(length),
         "Trying to read an array that is too long (wanted %s, only have %s)", length,
         buf.readableBytes());
-    String[] ret = new String[length];
-    for (int i = 0; i < length; i++) {
-      ret[i] = readString(buf);
+    // Direct allocation for normal sizes (fast path); incremental growth only for huge
+    // (likely malformed) lengths.
+    if (length <= 1024) {
+      String[] ret = new String[length];
+      for (int i = 0; i < length; i++) {
+        ret[i] = readString(buf);
+      }
+      return ret;
     }
-    return ret;
+    List<String> list = new ArrayList<>(16);
+    for (int i = 0; i < length; i++) {
+      list.add(readString(buf));
+    }
+    return list.toArray(new String[0]);
   }
 
   /**
@@ -575,14 +620,27 @@ public enum ProtocolUtils {
   public static int[] readVarIntArray(ByteBuf buf) {
     int length = readVarInt(buf);
     checkFrame(length >= 0, "Got a negative-length array (%s)", length);
+    if (length == 0) {
+      return new int[0];
+    }
     checkFrame(buf.isReadable(length),
         "Trying to read an array that is too long (wanted %s, only have %s)", length,
         buf.readableBytes());
-    int[] ret = new int[length];
-    for (int i = 0; i < length; i++) {
-      ret[i] = readVarInt(buf);
+    // Bounded direct allocation for normal sizes avoids Integer boxing; huge (likely
+    // malformed) lengths fall back to incremental growth.
+    if (length <= 1024) {
+      int[] ret = new int[length];
+      for (int i = 0; i < length; i++) {
+        ret[i] = readVarInt(buf);
+      }
+      return ret;
     }
-    return ret;
+    it.unimi.dsi.fastutil.ints.IntArrayList list =
+        new it.unimi.dsi.fastutil.ints.IntArrayList(16);
+    for (int i = 0; i < length; i++) {
+      list.add(readVarInt(buf));
+    }
+    return list.toIntArray();
   }
 
   /**
@@ -866,7 +924,9 @@ public enum ProtocolUtils {
    * @return pre-sized list
    */
   public static <T> List<T> newList(int initialCapacity) {
-    return new ArrayList<>(Math.min(initialCapacity, Short.MAX_VALUE));
+    // Cap presize: most lists are tiny, and huge upfront arrays waste RAM and enable
+    // allocation attacks. ArrayList grows automatically for legitimately large lists.
+    return new ArrayList<>(Math.min(Math.max(initialCapacity, 0), 16));
   }
 
   /**
@@ -878,7 +938,8 @@ public enum ProtocolUtils {
    * @return pre-sized map
    */
   public static <K, V> Map<K, V> newMap(int initialCapacity) {
-    return new HashMap<>(Math.min(initialCapacity, Short.MAX_VALUE));
+    // Cap presize for the same reason as newList: avoid huge tables from untrusted lengths.
+    return new HashMap<>(Math.min(Math.max(initialCapacity, 0), 16));
   }
 
   /**

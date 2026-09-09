@@ -88,8 +88,12 @@ public class MinecraftCompressorAndLengthEncoder extends MessageToByteEncoder<By
           : ctx.alloc().directBuffer(finalBufferSize);
     }
 
-    // (maximum data length after compression) + packet length varint + uncompressed data varint
-    int initialBufferSize = (uncompressed - 1) + 3 + ProtocolUtils.varIntBytes(uncompressed);
+    // (maximum data length after compression) + packet length varint + uncompressed data varint.
+    // Cap the upfront allocation: highly compressible data would otherwise reserve ~uncompressed
+    // bytes for a tiny output. The compressor grows the buffer on demand (ensureWritable /
+    // capacity doubling), so a smaller seed is safe and saves RAM on large packets.
+    int capped = Math.min(uncompressed, 8192);
+    int initialBufferSize = (capped - 1) + 3 + ProtocolUtils.varIntBytes(uncompressed);
     return MoreByteBufUtils.preferredBuffer(ctx.alloc(), compressor, initialBufferSize);
   }
 

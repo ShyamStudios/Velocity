@@ -44,7 +44,8 @@ public final class CappedSet<T> extends ForwardingSet<T> {
    * @return the new collection
    */
   public static <T> Set<T> create(int maxSize) {
-    return new CappedSet<>(new HashSet<>(), maxSize);
+    // Small presize: most usages hold 0-2 entries; avoids 16-bucket table per set.
+    return new CappedSet<>(new HashSet<>(4), maxSize);
   }
 
   @Override

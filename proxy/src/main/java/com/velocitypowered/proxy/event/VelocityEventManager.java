@@ -98,11 +98,14 @@ public class VelocityEventManager implements EventManager {
 
   private final ListMultimap<Class<?>, HandlerRegistration> handlersByType =
       ArrayListMultimap.create();
+  // Bound caches: event types and listener methods are finite, but custom plugin events
+  // could otherwise grow these without limit. Bounds also cap RAM.
   private final LoadingCache<Class<?>, HandlersCache> handlersCache =
-      Caffeine.newBuilder().build(this::bakeHandlers);
+      Caffeine.newBuilder().maximumSize(512).build(this::bakeHandlers);
 
   private final LoadingCache<Method, UntargetedEventHandler> untargetedMethodHandlers =
-      Caffeine.newBuilder().weakValues().build(this::buildUntargetedMethodHandler);
+      Caffeine.newBuilder().maximumSize(4096).weakValues()
+          .build(this::buildUntargetedMethodHandler);
 
   private final ReadWriteLock lock = new ReentrantReadWriteLock();
 

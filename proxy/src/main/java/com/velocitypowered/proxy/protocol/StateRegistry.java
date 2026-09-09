@@ -1005,6 +1005,9 @@ public enum StateRegistry {
 
           if (!current.encodeOnly) {
             registry.packetIdToSupplier.put(current.id, packetSupplier);
+            if (current.id >= 0 && current.id < registry.fastIdCache.length) {
+              registry.fastIdCache[current.id] = packetSupplier;
+            }
           }
           registry.packetClassToId.put(clazz, current.id);
         }
@@ -1021,6 +1024,11 @@ public enum StateRegistry {
           new IntObjectHashMap<>(16, 0.5f);
       final Object2IntMap<Class<? extends MinecraftPacket>> packetClassToId =
           new Object2IntOpenHashMap<>(16, 0.5f);
+      // Fast path: packet IDs are almost always < 128. Array lookup avoids hashing.
+      // Populated during static registration (single-threaded startup) before any
+      // Netty thread reads, so no synchronization is needed for reads.
+      final Supplier<? extends MinecraftPacket>[] fastIdCache =
+          new Supplier[128];
 
       ProtocolRegistry(final ProtocolVersion version) {
         this.version = version;
@@ -1034,6 +1042,16 @@ public enum StateRegistry {
        * @return the packet instance, or {@code null} if the ID is not registered
        */
       public @Nullable MinecraftPacket createPacket(final int id) {
+        if (id >= 0 && id < fastIdCache.length) {
+          final Supplier<? extends MinecraftPacket> fast = fastIdCache[id];
+          if (fast != null) {
+            return fast.get();
+          }
+          // Fall through to map: null in cache can mean unregistered OR encode-only.
+          // The map is authoritative.
+          final Supplier<? extends MinecraftPacket> fromMap = this.packetIdToSupplier.get(id);
+          return fromMap == null ? null : fromMap.get();
+        }
         final Supplier<? extends MinecraftPacket> supplier = this.packetIdToSupplier.get(id);
         if (supplier == null) {
           return null;

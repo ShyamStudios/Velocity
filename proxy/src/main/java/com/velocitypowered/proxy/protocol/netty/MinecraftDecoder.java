@@ -41,6 +41,8 @@ public class MinecraftDecoder extends ChannelInboundHandlerAdapter {
   private final ProtocolUtils.Direction direction;
   private StateRegistry state;
   private StateRegistry.PacketRegistry.ProtocolRegistry registry;
+  // Last-packet fast path is handled inside ProtocolRegistry.fastIdCache (array lookup),
+  // so no per-decoder cache is needed here.
 
   /**
    * Creates a new {@code MinecraftDecoder} decoding packets from the specified {@code direction}.

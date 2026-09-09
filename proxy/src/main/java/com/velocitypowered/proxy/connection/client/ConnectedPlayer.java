@@ -182,7 +182,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
   private @Nullable VelocityServerConnection connectionInFlight;
   private @Nullable PlayerSettings settings;
   private @Nullable ModInfo modInfo;
-  private final Set<VelocityBossBarImplementation> bossBars = new HashSet<>();
+  // Small initial capacities: most players have 0 boss bars / few channels.
+  // Saves ~100B+ per player (HashSet table) at 10k players ≈ 1MB+.
+  private final Set<VelocityBossBarImplementation> bossBars = new HashSet<>(4);
   private Component playerListHeader = Component.empty();
   private Component playerListFooter = Component.empty();
   private final InternalTabList tabList;

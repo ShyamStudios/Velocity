@@ -122,8 +122,11 @@ public class HandshakePacket implements MinecraftPacket {
 
   @Override
   public int encodeSizeHint(Direction direction, ProtocolVersion version) {
-    // We could compute an exact size, but 4KiB ought to be enough to encode all reasonable
-    // sizes of this packet.
-    return 4 * 1024;
+    // Exact hint: varint(protocol) + varint+bytes(address) + short(port) + varint(status).
+    // Avoids the old 4KiB over-allocation on every backend handshake.
+    int addressBytes = ProtocolUtils.stringSizeHint(serverAddress == null ? "" : serverAddress);
+    int protocolBytes = ProtocolUtils.varIntBytes(
+        protocolVersion == null ? 0 : protocolVersion.getProtocol());
+    return protocolBytes + addressBytes + 2 + ProtocolUtils.varIntBytes(nextStatus);
   }
 }

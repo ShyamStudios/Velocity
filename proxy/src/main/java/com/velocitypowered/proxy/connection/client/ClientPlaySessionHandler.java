@@ -73,6 +73,7 @@ import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerChatP
 import com.velocitypowered.proxy.protocol.packet.chat.session.SessionPlayerCommandPacket;
 import com.velocitypowered.proxy.protocol.packet.config.FinishedUpdatePacket;
 import com.velocitypowered.proxy.protocol.packet.title.GenericTitlePacket;
+import com.velocitypowered.proxy.protocol.util.DeferredByteBufHolder;
 import com.velocitypowered.proxy.protocol.util.PluginMessageUtil;
 import com.velocitypowered.proxy.util.CharacterUtil;
 import com.velocitypowered.proxy.util.except.QuietRuntimeException;
@@ -115,8 +116,15 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       Integer.getInteger("velocity.max-queued-login-plugin-messages", 1024);
 
   private static final Logger logger = LogManager.getLogger(ClientPlaySessionHandler.class);
+  // Mirror BackendPlay batching: delayedWrite + flush on batch end saves a ChannelPromise
+  // allocation and a flush (syscall) per forwarded packet. Flush still happens promptly
+  // on readCompleted (end of Netty read batch), so added latency is ~0.
+  private static final int MAXIMUM_PACKETS_TO_FLUSH =
+      Integer.getInteger("velocity.max-packets-per-flush", 8192);
+  private static final int LARGE_PACKET_THRESHOLD = 1024 * 128;
 
   private final ConnectedPlayer player;
+  private int packetsFlushed;
   private boolean spawned = false;
   private final List<UUID> serverBossBars = new ArrayList<>();
   private final Queue<PluginMessagePacket> loginPluginMessages = new ConcurrentLinkedQueue<>();
@@ -534,10 +542,18 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         && serverConnection.getPhase().consideredComplete()
         && smc.getState() == StateRegistry.PLAY;
     if (stateAllowsForward) {
+      boolean huge = false;
       if (packet instanceof PluginMessagePacket) {
         ((PluginMessagePacket) packet).retain();
       }
-      smc.write(packet);
+      if (packet instanceof DeferredByteBufHolder def) {
+        huge = def.content().readableBytes() > LARGE_PACKET_THRESHOLD;
+      }
+      smc.delayedWrite(packet);
+      if (huge || ++packetsFlushed >= MAXIMUM_PACKETS_TO_FLUSH) {
+        smc.flush();
+        packetsFlushed = 0;
+      }
     }
   }
 
@@ -555,7 +571,24 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         && serverConnection.getPhase().consideredComplete()
         && smc.getState() == StateRegistry.PLAY;
     if (stateAllowsForward) {
-      smc.write(buf.retain());
+      boolean huge = buf.readableBytes() > LARGE_PACKET_THRESHOLD;
+      smc.delayedWrite(buf.retain());
+      if (huge || ++packetsFlushed >= MAXIMUM_PACKETS_TO_FLUSH) {
+        smc.flush();
+        packetsFlushed = 0;
+      }
+    }
+  }
+
+  @Override
+  public void readCompleted() {
+    VelocityServerConnection serverConnection = player.getConnectedServer();
+    if (serverConnection != null && packetsFlushed > 0) {
+      MinecraftConnection smc = serverConnection.getConnection();
+      if (smc != null && !smc.isClosed()) {
+        smc.flush();
+      }
+      packetsFlushed = 0;
     }
   }
 

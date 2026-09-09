@@ -33,7 +33,8 @@ package com.velocitypowered.proxy.util;
 @SuppressWarnings("checkstyle:WhitespaceAfter") // Not our class
 public final class IntervalledCounter {
 
-  private static final int INITIAL_SIZE = 8;
+  // Small seed: idle connections hold tiny tables; resize doubles on demand for busy ones.
+  private static final int INITIAL_SIZE = 4;
 
   /**
    * Ring buffer holding the timestamp (in nanoseconds) for each data point.

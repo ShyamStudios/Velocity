@@ -40,7 +40,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public class VelocityTabListLegacy extends KeyedVelocityTabList {
 
-  private final Map<String, UUID> nameMapping = new ConcurrentHashMap<>();
+  private final Map<String, UUID> nameMapping = new ConcurrentHashMap<>(8);
 
   public VelocityTabListLegacy(final ConnectedPlayer player, final ProxyServer proxyServer) {
     super(player, proxyServer);

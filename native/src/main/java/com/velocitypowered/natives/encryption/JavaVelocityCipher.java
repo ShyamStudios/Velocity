@@ -64,18 +64,38 @@ public class JavaVelocityCipher implements VelocityCipher {
   @Override
   public void process(ByteBuf source) {
     ensureNotDisposed();
-    Preconditions.checkArgument(source.hasArray(), "No source array");
 
-    int inBytes = source.readableBytes();
-    int baseOffset = source.arrayOffset() + source.readerIndex();
+    if (source.hasArray()) {
+      int inBytes = source.readableBytes();
+      int baseOffset = source.arrayOffset() + source.readerIndex();
 
+      try {
+        cipher.update(source.array(), baseOffset, inBytes, source.array(), baseOffset);
+      } catch (ShortBufferException ex) {
+        /* This _really_ shouldn't happen - AES CFB8 will work in place.
+           If you run into this, that means that for whatever reason the Java Runtime has determined
+           that the output buffer needs more bytes than the input buffer. When we are working with
+           AES-CFB8, the output size is equal to the input size. See the problem? */
+        throw new AssertionError("Cipher update did not operate in place and requested a larger "
+                + "buffer than the source buffer");
+      }
+      return;
+    }
+
+    // Direct buffer path: avoids heap<->direct copies when mixed with native compression
+    // (libdeflate requires direct). Uses two independent views of the same memory so the
+    // streaming CFB8 cipher can operate in place without extra allocation.
+    Preconditions.checkArgument(source.nioBufferCount() == 1,
+        "source has multiple backing buffers");
+    int readable = source.readableBytes();
+    if (readable == 0) {
+      return;
+    }
+    java.nio.ByteBuffer in = source.nioBuffer(source.readerIndex(), readable);
+    java.nio.ByteBuffer out = source.nioBuffer(source.readerIndex(), readable);
     try {
-      cipher.update(source.array(), baseOffset, inBytes, source.array(), baseOffset);
+      cipher.update(in, out);
     } catch (ShortBufferException ex) {
-      /* This _really_ shouldn't happen - AES CFB8 will work in place.
-         If you run into this, that means that for whatever reason the Java Runtime has determined
-         that the output buffer needs more bytes than the input buffer. When we are working with
-         AES-CFB8, the output size is equal to the input size. See the problem? */
       throw new AssertionError("Cipher update did not operate in place and requested a larger "
               + "buffer than the source buffer");
     }
@@ -92,6 +112,7 @@ public class JavaVelocityCipher implements VelocityCipher {
 
   @Override
   public BufferPreference preferredBufferType() {
-    return BufferPreference.HEAP_REQUIRED;
+    // Prefer heap but tolerate direct: avoids copies when paired with native (direct) compression.
+    return BufferPreference.HEAP_PREFERRED;
   }
 }
