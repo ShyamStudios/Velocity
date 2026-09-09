@@ -27,6 +27,7 @@ import com.velocitypowered.proxy.protocol.packet.LegacyPingPacket;
 import com.velocitypowered.proxy.protocol.packet.StatusPingPacket;
 import com.velocitypowered.proxy.protocol.packet.StatusRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.StatusResponsePacket;
+import com.velocitypowered.proxy.security.ConnectionRateLimiter;
 import com.velocitypowered.proxy.util.except.QuietRuntimeException;
 import io.netty.buffer.ByteBuf;
 import org.apache.logging.log4j.LogManager;
@@ -62,6 +63,10 @@ public class StatusSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(LegacyPingPacket packet) {
+    if (!checkStatusRate()) {
+      connection.close();
+      return true;
+    }
     if (this.pingReceived) {
       throw EXPECTED_AWAITING_REQUEST;
     }
@@ -90,6 +95,10 @@ public class StatusSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(StatusRequestPacket packet) {
+    if (!checkStatusRate()) {
+      connection.close();
+      return true;
+    }
     if (this.pingReceived) {
       throw EXPECTED_AWAITING_REQUEST;
     }
@@ -120,6 +129,25 @@ public class StatusSessionHandler implements MinecraftSessionHandler {
   public void handleUnknown(ByteBuf buf) {
     // what even is going on?
     connection.close(true);
+  }
+
+  /**
+   * Applies the per-source status-request limit before any ping handling (which may contact a
+   * backend server and fires plugin events). Shed requests are closed without a response.
+   *
+   * @return {@code false} when the request must be dropped
+   */
+  private boolean checkStatusRate() {
+    if (server.getConnectionRateLimiter().tryStatus(connection.getRemoteAddress())
+        == ConnectionRateLimiter.Decision.ALLOWED) {
+      return true;
+    }
+    if (server.getSecurityMetrics().shouldLog() && logger.isWarnEnabled()) {
+      logger.warn("Status requests from {} are too frequent, dropping.",
+          server.getConfiguration().isPlayerAddressLoggingEnabled()
+              ? String.valueOf(connection.getRemoteAddress()) : "<ip address withheld>");
+    }
+    return false;
   }
 
   private enum State {

@@ -25,6 +25,7 @@ import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.crypto.IdentifiedKeyImpl;
 import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
+import com.velocitypowered.proxy.security.PacketValidation;
 import com.velocitypowered.proxy.util.except.QuietDecoderException;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
@@ -292,7 +293,9 @@ public enum ProtocolUtils {
     // `cap` is interpreted as a UTF-8 character length. To cover the full Unicode plane, we must
     // consider the length of a UTF-8 character, which can be up to 3 bytes. We do an initial
     // sanity check and then check again to make sure our optimistic guess was good.
-    checkFrame(length <= cap * 3, "Bad string size (got %s, maximum is %s)", length, cap);
+    // Computed in long: (cap * 3) as int would overflow for hostile caps.
+    checkFrame((long) length <= (long) cap * 3L, "Bad string size (got %s, maximum is %s)",
+        length, cap);
     checkFrame(buf.isReadable(length),
         "Trying to read a string that is too long (wanted %s, only have %s)", length,
         buf.readableBytes());
@@ -686,6 +689,7 @@ public enum ProtocolUtils {
   public static List<GameProfile.Property> readProperties(ByteBuf buf) {
     List<GameProfile.Property> properties = new ArrayList<>();
     int size = readVarInt(buf);
+    PacketValidation.checkProfileProperties(size);
     for (int i = 0; i < size; i++) {
       String name = readString(buf);
       String value = readString(buf);

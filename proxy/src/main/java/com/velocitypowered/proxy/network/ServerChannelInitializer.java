@@ -17,6 +17,7 @@
 
 package com.velocitypowered.proxy.network;
 
+import static com.velocitypowered.proxy.network.Connections.CONNECTION_LIMIT;
 import static com.velocitypowered.proxy.network.Connections.FRAME_DECODER;
 import static com.velocitypowered.proxy.network.Connections.FRAME_ENCODER;
 import static com.velocitypowered.proxy.network.Connections.LEGACY_PING_DECODER;
@@ -59,6 +60,8 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
   @Override
   protected void initChannel(final Channel ch) {
     ch.pipeline()
+        // Cheapest abuse check first: shed floods before any framing or decoding work.
+        .addLast(CONNECTION_LIMIT, new ConnectionLimitHandler(server))
         .addLast(LEGACY_PING_DECODER, new LegacyPingDecoder())
         .addLast(FRAME_DECODER, new MinecraftVarintFrameDecoder(ProtocolUtils.Direction.SERVERBOUND))
         .addLast(READ_TIMEOUT,

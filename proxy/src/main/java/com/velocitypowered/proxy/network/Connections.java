@@ -24,6 +24,7 @@ public class Connections {
 
   public static final String CIPHER_DECODER = "cipher-decoder";
   public static final String CIPHER_ENCODER = "cipher-encoder";
+  public static final String CONNECTION_LIMIT = "connection-limit";
   public static final String COMPRESSION_DECODER = "compression-decoder";
   public static final String COMPRESSION_ENCODER = "compression-encoder";
   public static final String FLOW_HANDLER = "flow-handler";

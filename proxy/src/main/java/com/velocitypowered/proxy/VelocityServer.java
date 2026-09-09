@@ -62,6 +62,9 @@ import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.util.FaviconSerializer;
 import com.velocitypowered.proxy.protocol.util.GameProfileSerializer;
 import com.velocitypowered.proxy.scheduler.VelocityScheduler;
+import com.velocitypowered.proxy.security.ConnectionRateLimiter;
+import com.velocitypowered.proxy.security.SecurityConfig;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.server.ServerMap;
 import com.velocitypowered.proxy.util.AddressUtil;
 import com.velocitypowered.proxy.util.ClosestLocaleMatcher;
@@ -85,6 +88,7 @@ import java.security.KeyPair;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -169,6 +173,9 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private volatile @Nullable UUID sessionId;
   private final VelocityConsole console;
   private @MonotonicNonNull Ratelimiter<InetAddress> ipAttemptLimiter;
+  private @MonotonicNonNull SecurityConfig securityConfig;
+  private @MonotonicNonNull ConnectionRateLimiter connectionRateLimiter;
+  private final SecurityMetrics securityMetrics = new SecurityMetrics();
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
   private final VelocityEventManager eventManager;
@@ -256,6 +263,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     serverKeyPair = EncryptionUtils.createRsaKeyPair(1024);
 
     cm.logChannelInformation();
+    logCompressionOverrideWarning();
 
     // Initialize commands first
     final BrigadierCommand velocityParentCommand = VelocityCommand.create(this);
@@ -413,11 +421,39 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         System.exit(1);
       }
 
+      securityConfig = SecurityConfig.load(Path.of(SecurityConfig.FILE_NAME));
+      final List<String> securityErrors = securityConfig.validate();
+      if (!securityErrors.isEmpty()) {
+        for (final String error : securityErrors) {
+          logger.error("Invalid {}: {}", SecurityConfig.FILE_NAME, error);
+        }
+        logger.error("Your security configuration is invalid. Velocity will not start up until "
+            + "the errors are resolved.");
+        LogManager.shutdown();
+        System.exit(1);
+      }
+      connectionRateLimiter = new ConnectionRateLimiter(securityConfig, securityMetrics);
+
       commandManager.setAnnounceProxyCommands(configuration.isAnnounceProxyCommands());
     } catch (Exception e) {
       logger.error("Unable to read/load/save your velocity.toml. The server will shut down.", e);
       LogManager.shutdown();
       System.exit(1);
+    }
+  }
+
+  /**
+   * Warns when JVM flags silently remove decompression guardrails. These flags are only meant
+   * for debugging with trusted clients.
+   */
+  private static void logCompressionOverrideWarning() {
+    if (Boolean.getBoolean("velocity.increased-compression-cap")) {
+      logger.warn("The velocity.increased-compression-cap flag is set: the decompression bomb "
+          + "ceiling is raised to 128MiB. Only use this with trusted clients.");
+    }
+    if (Boolean.getBoolean("velocity.skip-uncompressed-packet-size-validation")) {
+      logger.warn("The velocity.skip-uncompressed-packet-size-validation flag is set: "
+          + "uncompressed-size validation is bypassed. Only use this with trusted clients.");
     }
   }
 
@@ -557,6 +593,24 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
     commandManager.setAnnounceProxyCommands(newConfiguration.isAnnounceProxyCommands());
     ipAttemptLimiter = Ratelimiters.createWithMilliseconds(newConfiguration.getLoginRatelimit());
+    // Reload abuse protections as well; on any failure keep the previous ones running.
+    final SecurityConfig newSecurity;
+    try {
+      newSecurity = SecurityConfig.load(Path.of(SecurityConfig.FILE_NAME));
+    } catch (Exception e) {
+      logger.error("Unable to reload {}, keeping the previous security configuration.",
+          SecurityConfig.FILE_NAME, e);
+      return false;
+    }
+    final List<String> securityErrors = newSecurity.validate();
+    if (!securityErrors.isEmpty()) {
+      for (final String error : securityErrors) {
+        logger.error("Invalid {}: {}", SecurityConfig.FILE_NAME, error);
+      }
+      return false;
+    }
+    this.securityConfig = newSecurity;
+    this.connectionRateLimiter = new ConnectionRateLimiter(newSecurity, securityMetrics);
     this.configuration = newConfiguration;
     eventManager.fireAndForget(new ProxyReloadEvent());
     return true;
@@ -682,6 +736,33 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
   public @MonotonicNonNull Ratelimiter<InetAddress> getIpAttemptLimiter() {
     return ipAttemptLimiter;
+  }
+
+  /**
+   * Returns the connection-abuse limiter built from {@code secure.yml}.
+   *
+   * @return the limiter, or {@code null} before startup configuration has loaded
+   */
+  public @MonotonicNonNull ConnectionRateLimiter getConnectionRateLimiter() {
+    return connectionRateLimiter;
+  }
+
+  /**
+   * Returns the cumulative security telemetry counters.
+   *
+   * @return the security metrics
+   */
+  public SecurityMetrics getSecurityMetrics() {
+    return securityMetrics;
+  }
+
+  /**
+   * Returns the connection-abuse configuration loaded from {@code secure.yml}.
+   *
+   * @return the security configuration, or {@code null} before startup configuration has loaded
+   */
+  public @MonotonicNonNull SecurityConfig getSecurityConfig() {
+    return securityConfig;
   }
 
   public @MonotonicNonNull Ratelimiter<UUID> getCommandRateLimiter() {

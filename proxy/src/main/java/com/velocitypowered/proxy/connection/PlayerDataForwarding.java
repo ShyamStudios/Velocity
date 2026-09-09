@@ -24,6 +24,7 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.crypto.IdentifiedKey;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
+import com.velocitypowered.proxy.security.ForwardingValidator;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.nio.charset.StandardCharsets;
@@ -160,8 +161,9 @@ public final class PlayerDataForwarding {
     // BungeeCord IP forwarding is simply a special injection after the "address" in the handshake,
     // separated by \0 (the null byte). In order, you send the original host, the player's IP, their
     // UUID (undashed), and if you are in online-mode, their login properties (from Mojang).
+    // The host is sanitized so it can never smuggle a separator into the backend's parsing.
     final StringBuilder data = new StringBuilder()
-        .append(serverAddress)
+        .append(ForwardingValidator.sanitizeVhost(serverAddress))
         .append(LEGACY_SEPARATOR)
         .append(playerAddress)
         .append(LEGACY_SEPARATOR)

@@ -39,6 +39,7 @@ import com.velocitypowered.proxy.protocol.packet.HandshakePacket;
 import com.velocitypowered.proxy.protocol.packet.LegacyDisconnect;
 import com.velocitypowered.proxy.protocol.packet.LegacyHandshakePacket;
 import com.velocitypowered.proxy.protocol.packet.LegacyPingPacket;
+import com.velocitypowered.proxy.security.ConnectionRateLimiter;
 import io.netty.buffer.ByteBuf;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -137,6 +138,20 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
     final InetAddress address = ((InetSocketAddress) connection.getRemoteAddress()).getAddress();
     if (!server.getIpAttemptLimiter().attempt(address)) {
       // Bump connection into correct protocol state so that we can send the disconnect packet.
+      connection.setState(StateRegistry.LOGIN);
+      ic.disconnectQuietly(Component.translatable("velocity.error.logging-in-too-fast"));
+      return;
+    }
+
+    // Bounds the expensive authentication path (RSA work plus a Mojang round trip) per source.
+    // Uses the handshake-time address, which already reflects the PROXY protocol header.
+    if (server.getConnectionRateLimiter().tryLogin(connection.getRemoteAddress())
+        != ConnectionRateLimiter.Decision.ALLOWED) {
+      if (server.getSecurityMetrics().shouldLog()) {
+        LOGGER.warn("Login attempts from {} are too frequent, throttling.",
+            server.getConfiguration().isPlayerAddressLoggingEnabled()
+                ? connection.getRemoteAddress().toString() : "<ip address withheld>");
+      }
       connection.setState(StateRegistry.LOGIN);
       ic.disconnectQuietly(Component.translatable("velocity.error.logging-in-too-fast"));
       return;

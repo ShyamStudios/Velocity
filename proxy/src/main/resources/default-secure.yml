@@ -1,0 +1,43 @@
+# Velocity connection-abuse protections.
+# This file is created automatically next to velocity.toml on first boot.
+# Every limit below accepts 0 to disable that individual check.
+# All defaults are lenient toward legitimate players; see SECURITY.md for the
+# threat model and tuning guidance.
+
+# Master switch for the protections in this file.
+enabled: true
+
+# Maximum simultaneous connections from one source (IPv4 address, or IPv6 /64).
+# Households and small LANs never come close; handshake floods open hundreds.
+max-concurrent-connections-per-ip: 32
+
+# Sustained new connections per second, per source, plus the burst allowance.
+# Launchers open a couple per second; scanners and bots do dozens.
+max-new-connections-per-second-per-ip: 10
+new-connections-burst-per-ip: 20
+
+# Backstop on simultaneous connections proxy-wide. Most single proxies peak well
+# under ten thousand; lower this on small machines.
+max-concurrent-connections-global: 50000
+
+# Sustained new connections per second proxy-wide. 0 disables: flash crowds of
+# legitimate players must never be dropped, per-source and concurrent limits
+# already cover floods.
+max-new-connections-per-second-global: 0
+
+# Login attempts per second, per source. Logins cost RSA work plus a Mojang
+# round trip, so this is deliberately tight; normal retries are human-paced.
+# This complements advanced.login-ratelimit in velocity.toml.
+max-login-attempts-per-second-per-ip: 2
+login-attempts-burst-per-ip: 4
+
+# Server-list (status) requests per second, per source. List refreshes are
+# manual; botnets poll constantly, and each request can cost ping handling.
+max-status-requests-per-second-per-ip: 5
+status-requests-burst-per-ip: 10
+
+# Repeat violators earn a short temporary penalty (never a permanent ban, so a
+# shared address cannot be blocked forever by someone else's behavior).
+abuse-penalty-threshold: 10
+abuse-window-seconds: 60
+abuse-penalty-seconds: 30

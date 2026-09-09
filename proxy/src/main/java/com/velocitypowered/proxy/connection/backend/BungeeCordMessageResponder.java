@@ -32,6 +32,7 @@ import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataInput;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataOutput;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.server.VelocityRegisteredServer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.netty.buffer.ByteBuf;
@@ -344,30 +345,44 @@ public class BungeeCordMessageResponder {
       return false;
     }
 
+    // A malformed backend message must not tear down the player's connection: there is nothing
+    // actionable in truncated input, so it is ignored and counted instead of disconnecting.
     final ByteBufDataInput in = new ByteBufDataInput(message.content());
-    final String subChannel = in.readUTF();
-    switch (subChannel) {
-      case "GetPlayerServer" -> this.processGetPlayerServer(in);
-      case "ForwardToPlayer" -> this.processForwardToPlayer(in);
-      case "Forward" -> this.processForwardToServer(in);
-      case "Connect" -> this.processConnect(in);
-      case "ConnectOther" -> this.processConnectOther(in);
-      case "IP" -> this.processIp(in);
-      case "PlayerCount" -> this.processPlayerCount(in);
-      case "PlayerList" -> this.processPlayerList(in);
-      case "GetServers" -> this.processGetServers();
-      case "Message" -> this.processMessage(in);
-      case "MessageRaw" -> this.processMessageRaw(in);
-      case "GetServer" -> this.processGetServer();
-      case "UUID" -> this.processUuid();
-      case "UUIDOther" -> this.processUuidOther(in);
-      case "IPOther" -> this.processIpOther(in);
-      case "ServerIP" -> this.processServerIp(in);
-      case "KickPlayer" -> this.processKick(in);
-      case "KickPlayerRaw" -> this.processKickRaw(in);
-      default -> {
+    final String subChannel;
+    try {
+      subChannel = in.readUTF();
+    } catch (final RuntimeException e) {
+      proxy.getSecurityMetrics().record(
+          SecurityMetrics.Reason.MALFORMED_BACKEND_MESSAGE);
+      return true;
+    }
+    try {
+      switch (subChannel) {
+        case "GetPlayerServer" -> this.processGetPlayerServer(in);
+        case "ForwardToPlayer" -> this.processForwardToPlayer(in);
+        case "Forward" -> this.processForwardToServer(in);
+        case "Connect" -> this.processConnect(in);
+        case "ConnectOther" -> this.processConnectOther(in);
+        case "IP" -> this.processIp(in);
+        case "PlayerCount" -> this.processPlayerCount(in);
+        case "PlayerList" -> this.processPlayerList(in);
+        case "GetServers" -> this.processGetServers();
+        case "Message" -> this.processMessage(in);
+        case "MessageRaw" -> this.processMessageRaw(in);
+        case "GetServer" -> this.processGetServer();
+        case "UUID" -> this.processUuid();
+        case "UUIDOther" -> this.processUuidOther(in);
+        case "IPOther" -> this.processIpOther(in);
+        case "ServerIP" -> this.processServerIp(in);
+        case "KickPlayer" -> this.processKick(in);
+        case "KickPlayerRaw" -> this.processKickRaw(in);
+        default -> {
           // Do nothing, unknown command
+        }
       }
+    } catch (final RuntimeException e) {
+      proxy.getSecurityMetrics().record(
+          SecurityMetrics.Reason.MALFORMED_BACKEND_MESSAGE);
     }
 
     return true;

@@ -54,6 +54,7 @@ import com.velocitypowered.proxy.protocol.netty.MinecraftVarintLengthEncoder;
 import com.velocitypowered.proxy.protocol.netty.PlayPacketQueueInboundHandler;
 import com.velocitypowered.proxy.protocol.netty.PlayPacketQueueOutboundHandler;
 import com.velocitypowered.proxy.protocol.packet.SetCompressionPacket;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.util.except.QuietDecoderException;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -63,6 +64,7 @@ import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoop;
+import io.netty.handler.codec.DecoderException;
 import io.netty.handler.codec.haproxy.HAProxyMessage;
 import io.netty.handler.timeout.ReadTimeoutException;
 import io.netty.util.ReferenceCountUtil;
@@ -179,6 +181,11 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
   @Override
   public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
     if (ctx.channel().isActive()) {
+      if (cause instanceof DecoderException) {
+        // Covers frame, decompression, cipher, and packet decode failures from either side.
+        // Counting only: logging behavior below is unchanged, so this can never amplify logs.
+        server.getSecurityMetrics().record(SecurityMetrics.Reason.MALFORMED_PACKET);
+      }
       if (activeSessionHandler != null) {
         try {
           activeSessionHandler.exception(cause);

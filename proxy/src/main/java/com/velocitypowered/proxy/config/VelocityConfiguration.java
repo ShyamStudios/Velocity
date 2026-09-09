@@ -164,6 +164,9 @@ public class VelocityConfiguration implements ProxyConfig {
     switch (playerInfoForwardingMode) {
       case NONE -> logger.warn("Player info forwarding is disabled! All players will appear to be connecting "
             + "from the proxy and will have offline-mode UUIDs.");
+      case LEGACY -> logger.warn("Player info forwarding uses legacy (BungeeCord) mode, which carries "
+            + "no shared secret. Anyone who can reach your backend servers directly can impersonate "
+            + "any player: firewall your backends so only this proxy can connect to them.");
       case MODERN, BUNGEEGUARD -> {
         if (forwardingSecret == null || forwardingSecret.length == 0) {
           logger.error("You don't have a forwarding secret set. This is required for security.");
