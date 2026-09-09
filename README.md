@@ -3,47 +3,23 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/PaperMC/Velocity/gradle.yml)](https://papermc.io/downloads/velocity)
 [![Join our Discord](https://img.shields.io/discord/289587909051416579.svg?logo=discord&label=)](https://discord.gg/papermc)
 
-> This fork focuses on performance and security work on top of upstream
-> Velocity, keeping full plugin API compatibility (no `api/*` changes).
-
-## How much faster is this fork?
-
-Tested on the same machine, original code vs this fork, same repeated tasks.
-Lower bar = faster. All plugins still work (no API changes).
-
-```
-Empty chat/text reads        old ██████████████████████████████  30.7ms
-                             new █████                             6.0ms   ~5x faster
-
-Big player-list builds       old ██████████████████████████████  4797ms
-                             new ▏                                 5.6ms   ~855x faster
-
-Big server-list builds       old ██████████████████████████████  5089ms
-                             new ▏                                21.5ms   ~237x faster
-
-Finding packet types         old ██████████████████████████████   8.1ms
-                             new ██████████                       2.8ms   ~3x faster
-
-Normal gameplay packets      old ██████████████████████████████  12.1ms
-                             new ██████████████████████████████  12.2ms   same
-```
-
-Overall picture:
-
-- **Everyday play:** about the same speed, slightly smoother.
-- **Busy moments (logins, big servers, large packets):** much faster with
-  far fewer lag spikes, because the proxy now uses far less short-lived
-  memory in those paths.
-- **Memory:** roughly 1kB less per player (~10MB saved per 10,000 players),
-  plus large packets no longer reserve ~1MB upfront (~8kB instead).
-- **One tradeoff:** joining a server does a tiny bit more math once per
-  login (unnoticeable) to save ~4kB of memory each time.
-
-Note: these are repeated-task measurements, not a full live-server test.
-Real-world gains are biggest during login waves and busy periods.
-
 A Minecraft server proxy with unparalleled server support, scalability,
 and flexibility.
+
+This fork explores connection-abuse protections (configured via `secure.yml`),
+tighter validation of untrusted protocol input, and reduced allocation
+overhead on hot paths, while keeping the public plugin API unchanged.
+
+Areas currently being worked on:
+
+* Batching packet writes and flushes where ordering allows, to issue fewer
+  syscalls per burst of packets.
+* Capping upfront buffer and collection sizes derived from untrusted lengths,
+  so malformed input cannot force large allocations before validation fails.
+* Replacing per-packet promise allocations with shared/void promises on
+  fire-and-forget write paths.
+* Keeping per-player and per-connection bookkeeping tables small by default
+  and growing them on demand.
 
 Velocity is licensed under the GPLv3 license.
 
