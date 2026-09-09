@@ -30,7 +30,8 @@ import java.util.Set;
 public final class BossBarManager {
 
   private final ConnectedPlayer player;
-  private final Set<VelocityBossBarImplementation> bossBars = new HashSet<>();
+  // Small presize: most players see zero or one boss bar; avoids a 16-bucket table per player.
+  private final Set<VelocityBossBarImplementation> bossBars = new HashSet<>(4);
 
   private boolean dropPackets = false;
 

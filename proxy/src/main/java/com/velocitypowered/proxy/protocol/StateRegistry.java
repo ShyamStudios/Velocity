@@ -1005,8 +1005,12 @@ public enum StateRegistry {
 
           if (!current.encodeOnly) {
             registry.packetIdToSupplier.put(current.id, packetSupplier);
-            if (current.id >= 0 && current.id < registry.fastIdCache.length) {
-              registry.fastIdCache[current.id] = packetSupplier;
+            // Null-tolerant: protocol plugins (e.g. LimboAPI) build registry instances
+            // reflectively, bypassing field initializers. A missing cache only costs speed;
+            // the map below stays authoritative.
+            final Supplier<? extends MinecraftPacket>[] cache = registry.fastIdCache;
+            if (cache != null && current.id >= 0 && current.id < cache.length) {
+              cache[current.id] = packetSupplier;
             }
           }
           registry.packetClassToId.put(clazz, current.id);
@@ -1042,8 +1046,11 @@ public enum StateRegistry {
        * @return the packet instance, or {@code null} if the ID is not registered
        */
       public @Nullable MinecraftPacket createPacket(final int id) {
-        if (id >= 0 && id < fastIdCache.length) {
-          final Supplier<? extends MinecraftPacket> fast = fastIdCache[id];
+        // Null-tolerant for the same reason as in register(): reflectively built registries
+        // simply use the map path, exactly like upstream.
+        final Supplier<? extends MinecraftPacket>[] cache = fastIdCache;
+        if (cache != null && id >= 0 && id < cache.length) {
+          final Supplier<? extends MinecraftPacket> fast = cache[id];
           if (fast != null) {
             return fast.get();
           }
