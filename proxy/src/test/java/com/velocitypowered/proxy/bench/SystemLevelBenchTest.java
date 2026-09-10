@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 import com.sun.management.ThreadMXBean;
 import com.velocitypowered.api.network.HandshakeIntent;
@@ -110,8 +111,11 @@ class SystemLevelBenchTest {
     final VelocityServer server;
 
     Fixture() {
-      this.server = mock(VelocityServer.class);
-      final VelocityConfiguration config = mock(VelocityConfiguration.class);
+      // stubOnly: plain mocks record every invocation for potential verify(), which would
+      // retain millions of call records over a soak run and exhaust the heap. We only stub.
+      this.server = mock(VelocityServer.class, withSettings().stubOnly());
+      final VelocityConfiguration config =
+          mock(VelocityConfiguration.class, withSettings().stubOnly());
       when(config.getReadTimeout()).thenReturn(30000);
       when(config.isProxyProtocol()).thenReturn(false);
       when(config.isPlayerAddressLoggingEnabled()).thenReturn(false);
@@ -133,12 +137,14 @@ class SystemLevelBenchTest {
       } catch (final ReflectiveOperationException e) {
         // Baseline build: no metrics hook to stub.
       }
-      final com.velocitypowered.proxy.event.VelocityEventManager eventManager =
-          mock(com.velocitypowered.proxy.event.VelocityEventManager.class);
+      final com.velocitypowered.proxy.event.VelocityEventManager eventManager = mock(
+          com.velocitypowered.proxy.event.VelocityEventManager.class,
+          withSettings().stubOnly());
       when(eventManager.fire(any())).thenAnswer(
           invocation -> CompletableFuture.completedFuture(invocation.getArgument(0)));
       when(server.getEventManager()).thenReturn(eventManager);
-      final ServerListPingHandler pingHandler = mock(ServerListPingHandler.class);
+      final ServerListPingHandler pingHandler =
+          mock(ServerListPingHandler.class, withSettings().stubOnly());
       final ServerPing ping = new ServerPing(new ServerPing.Version(766, "1.20.5"), null,
           Component.text("bench"), null);
       when(pingHandler.getInitialPing(any()))
@@ -209,17 +215,28 @@ class SystemLevelBenchTest {
     return value == null ? def : value;
   }
 
+  static void printPercentiles(final String workload, final long[] nanos, final int units) {
+    final long[] sorted = nanos.clone();
+    java.util.Arrays.sort(sorted);
+    System.out.println("BENCH_PCT workload=" + workload + " units=" + units + " p50ns="
+        + sorted[(int) (sorted.length * 0.50)] + " p95ns=" + sorted[(int) (sorted.length * 0.95)]
+        + " p99ns=" + sorted[Math.min(sorted.length - 1, (int) (sorted.length * 0.99))] + " maxNs="
+        + sorted[sorted.length - 1]);
+  }
+
   @Test
-  void runAllWorkloads() {
+  void runAllWorkloads() throws Exception {
     final String label = env("BENCH_LABEL", "run");
     final int conns = Integer.parseInt(env("BENCH_CONNS", "2000"));
     final int playPerConn = Integer.parseInt(env("BENCH_PLAY", "200"));
     final int rounds = Integer.parseInt(env("BENCH_ROUNDS", "3"));
+    final int soakMinutes = Integer.parseInt(env("BENCH_SOAK_MINUTES", "0"));
+    final int floodAttempts = Integer.parseInt(env("BENCH_FLOOD", "20000"));
 
     System.out.println("BENCH config label=" + label + " conns=" + conns + " playPerConn="
-        + playPerConn + " rounds=" + rounds + " cpus="
-        + Runtime.getRuntime().availableProcessors() + " maxHeap=" + Runtime.getRuntime().maxMemory()
-        + " java=" + System.getProperty("java.version"));
+        + playPerConn + " rounds=" + rounds + " soakMinutes=" + soakMinutes + " flood="
+        + floodAttempts + " cpus=" + Runtime.getRuntime().availableProcessors() + " maxHeap="
+        + Runtime.getRuntime().maxMemory() + " java=" + System.getProperty("java.version"));
 
     // Warmup (discarded).
     try (final Fixture fixture = new Fixture()) {
@@ -234,6 +251,10 @@ class SystemLevelBenchTest {
         runPlayMix(fixture, conns / 10, playPerConn, true);
         runStatusStorm(fixture, conns / 10, true);
         runMalformedStorm(fixture, conns / 10, true);
+        runFloodStorm(fixture, floodAttempts, true);
+      }
+      if (soakMinutes > 0) {
+        runSoak(fixture, soakMinutes);
       }
     }
     assertTrue(true);
@@ -278,16 +299,22 @@ class SystemLevelBenchTest {
     final long allocBefore = allocatedBytes();
     final long heapBefore = usedHeap();
     final long start = System.nanoTime();
+    final long[] timings = new long[handshakes.size()];
     int completed = 0;
     for (final ByteBuf bytes : handshakes) {
+      final long unitStart = System.nanoTime();
       final EmbeddedChannel channel = newFrontend(fixture);
       channel.pipeline().fireChannelActive();
       channel.writeInbound(bytes);
       channel.pipeline().fireChannelInactive();
       channel.finishAndReleaseAll();
+      timings[completed] = System.nanoTime() - unitStart;
       completed++;
     }
     report("handshake", measure, completed, start, allocBefore, heapBefore, gcBefore);
+    if (measure) {
+      printPercentiles("handshake", timings, completed);
+    }
     assertEquals(conns, completed);
   }
 
@@ -297,8 +324,10 @@ class SystemLevelBenchTest {
     final long allocBefore = allocatedBytes();
     final long heapBefore = usedHeap();
     final long start = System.nanoTime();
+    final long[] timings = new long[conns];
     int decoded = 0;
     for (int c = 0; c < conns; c++) {
+      final long unitStart = System.nanoTime();
       final EmbeddedChannel channel = new EmbeddedChannel();
       channel.pipeline()
           .addLast(new MinecraftVarintFrameDecoder(ProtocolUtils.Direction.SERVERBOUND))
@@ -324,8 +353,12 @@ class SystemLevelBenchTest {
       }
       decoded += counter.messages;
       channel.finishAndReleaseAll();
+      timings[c] = System.nanoTime() - unitStart;
     }
     report("play-mix", measure, decoded, start, allocBefore, heapBefore, gcBefore);
+    if (measure) {
+      printPercentiles("play-mix-per-conn", timings, conns);
+    }
     assertEquals(conns * perConn, decoded);
   }
 
@@ -334,8 +367,10 @@ class SystemLevelBenchTest {
     final long allocBefore = allocatedBytes();
     final long heapBefore = usedHeap();
     final long start = System.nanoTime();
+    final long[] timings = new long[count];
     int completed = 0;
     for (int i = 0; i < count; i++) {
+      final long unitStart = System.nanoTime();
       final EmbeddedChannel channel = newFrontend(fixture);
       channel.pipeline().fireChannelActive();
       final HandshakePacket handshake = new HandshakePacket();
@@ -348,9 +383,13 @@ class SystemLevelBenchTest {
       channel.runPendingTasks();
       channel.pipeline().fireChannelInactive();
       channel.finishAndReleaseAll();
+      timings[completed] = System.nanoTime() - unitStart;
       completed++;
     }
     report("status", measure, completed, start, allocBefore, heapBefore, gcBefore);
+    if (measure) {
+      printPercentiles("status", timings, completed);
+    }
     assertEquals(count, completed);
   }
 
@@ -359,8 +398,10 @@ class SystemLevelBenchTest {
     final long allocBefore = allocatedBytes();
     final long heapBefore = usedHeap();
     final long start = System.nanoTime();
+    final long[] timings = new long[count];
     int completed = 0;
     for (int i = 0; i < count; i++) {
+      final long unitStart = System.nanoTime();
       final EmbeddedChannel channel = newFrontend(fixture);
       channel.pipeline().fireChannelActive();
       // Frame claims 5 bytes, carries a 5-byte non-terminating varint + truncated string.
@@ -373,10 +414,155 @@ class SystemLevelBenchTest {
       }
       channel.pipeline().fireChannelInactive();
       channel.finishAndReleaseAll();
+      timings[completed] = System.nanoTime() - unitStart;
       completed++;
     }
     report("malformed", measure, completed, start, allocBefore, heapBefore, gcBefore);
+    if (measure) {
+      printPercentiles("malformed", timings, completed);
+    }
     assertEquals(count, completed);
+  }
+
+  /**
+   * Flood workload: rapid attempts from one abusive source with one legitimate attempt
+   * interleaved every tenth try. On the fork this exercises the real admission path
+   * (shed cheaply); on the baseline tree the limiter does not exist, so every attempt pays
+   * a full handshake decode — exactly what upstream must do with flood traffic.
+   */
+  private void runFloodStorm(final Fixture fixture, final int attempts, final boolean measure)
+      throws Exception {
+    final Object limiter = newLimiter();
+    final java.net.InetSocketAddress floodAddr =
+        new java.net.InetSocketAddress(java.net.InetAddress.getByName("10.99.0.1"), 50000);
+    final List<ByteBuf> handshakeBytes = new ArrayList<>(1);
+    HandshakePacket handshake = new HandshakePacket();
+    handshake.setProtocolVersion(VERSION);
+    handshake.setServerAddress("localhost");
+    handshake.setPort(25565);
+    handshake.setIntent(HandshakeIntent.LOGIN);
+    handshakeBytes.add(encodeWith(StateRegistry.HANDSHAKE, handshake));
+
+    final GcSnapshot gcBefore = new GcSnapshot();
+    final long allocBefore = allocatedBytes();
+    final long heapBefore = usedHeap();
+    final long start = System.nanoTime();
+    final long[] legitTimings = new long[attempts / 10 + 1];
+    int shed = 0;
+    int admitted = 0;
+    int legitOk = 0;
+    int legitFail = 0;
+    int legitIdx = 0;
+    for (int i = 0; i < attempts; i++) {
+      if (i % 10 == 0) {
+        // Legitimate user from their own address.
+        final long unitStart = System.nanoTime();
+        final java.net.InetSocketAddress legitAddr = new java.net.InetSocketAddress(
+            java.net.InetAddress.getByAddress(
+                new byte[] {10, 99, (byte) (1 + (i / 10) % 20), (byte) (1 + (i / 10) / 20)}),
+            50000);
+        if (limiter == null) {
+          decodeOneHandshake(fixture, handshakeBytes.get(0).retainedDuplicate());
+          legitOk++;
+        } else if (tryAcquire(limiter, legitAddr)) {
+          legitOk++;
+        } else {
+          legitFail++;
+        }
+        legitTimings[legitIdx++] = System.nanoTime() - unitStart;
+      } else if (limiter == null) {
+        decodeOneHandshake(fixture, handshakeBytes.get(0).retainedDuplicate());
+      } else if (tryAcquire(limiter, floodAddr)) {
+        admitted++;
+      } else {
+        shed++;
+      }
+    }
+    handshakeBytes.get(0).release();
+    final GcSnapshot gcAfter = new GcSnapshot();
+    if (measure) {
+      System.out.println("BENCH workload=flood attempts=" + attempts + " shed=" + shed
+          + " admitted=" + admitted + " legitOk=" + legitOk + " legitFail=" + legitFail
+          + " wallMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+          + " allocatedBytes=" + (allocatedBytes() - allocBefore) + " heapDeltaBytes="
+          + (usedHeap() - heapBefore) + " gcCount=" + (gcAfter.count - gcBefore.count)
+          + " gcMs=" + (gcAfter.millis - gcBefore.millis));
+      final long[] legitUsed = java.util.Arrays.copyOf(legitTimings, legitIdx);
+      printPercentiles("flood-legit", legitUsed, legitIdx);
+    }
+    assertEquals(0, legitFail);
+  }
+
+  private void decodeOneHandshake(final Fixture fixture, final ByteBuf bytes) {
+    final EmbeddedChannel channel = newFrontend(fixture);
+    channel.pipeline().fireChannelActive();
+    channel.writeInbound(bytes);
+    channel.pipeline().fireChannelInactive();
+    channel.finishAndReleaseAll();
+  }
+
+  /**
+   * Reflective admission check: {@code true} means the attempt was allowed (and released).
+   */
+  static boolean tryAcquire(final Object limiter, final java.net.SocketAddress remote)
+      throws Exception {
+    final java.lang.reflect.Method acquire =
+        limiter.getClass().getMethod("tryAcquireConnection", java.net.SocketAddress.class,
+            boolean.class);
+    final Object attempt = acquire.invoke(limiter, remote, true);
+    final java.lang.reflect.Method decision =
+        attempt.getClass().getMethod("decision");
+    final Object verdict = decision.invoke(attempt);
+    final boolean allowed = "ALLOWED".equals(((Enum<?>) verdict).name());
+    if (allowed) {
+      final java.lang.reflect.Method acquisition =
+          attempt.getClass().getMethod("acquisition");
+      final Object handle = acquisition.invoke(attempt);
+      if (handle != null) {
+        final java.lang.reflect.Method release =
+            limiter.getClass().getMethod("release", handle.getClass());
+        release.invoke(limiter, handle);
+      }
+    }
+    return allowed;
+  }
+
+  /**
+   * Sustained soak: repeats a mixed mini-workload until the minute budget expires, printing
+   * one sample line per minute (wall, allocation, GC, heap, threads) to expose growth, drift,
+   * or leaks over time.
+   */
+  private void runSoak(final Fixture fixture, final int minutes) throws Exception {
+    final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(minutes);
+    int minute = 0;
+    final GcSnapshot totalGcBefore = new GcSnapshot();
+    final long totalAllocBefore = allocatedBytes();
+    while (System.nanoTime() < deadline) {
+      final long minuteStart = System.nanoTime();
+      final long minuteDeadline = minuteStart + TimeUnit.MINUTES.toNanos(1);
+      final GcSnapshot gcBefore = new GcSnapshot();
+      final long allocBefore = allocatedBytes();
+      int units = 0;
+      while (System.nanoTime() < Math.min(minuteDeadline, deadline)) {
+        runHandshakeStorm(fixture, 50, false);
+        runPlayMix(fixture, 5, 50, false);
+        runStatusStorm(fixture, 5, false);
+        runMalformedStorm(fixture, 5, false);
+        runFloodStorm(fixture, 500, false);
+        units += 560;
+      }
+      final GcSnapshot gcAfter = new GcSnapshot();
+      final int threads =
+          ManagementFactory.getThreadMXBean().getThreadCount();
+      System.out.println("BENCH soak minute=" + (++minute) + " units=" + units + " wallMs="
+          + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - minuteStart) + " allocatedBytes="
+          + (allocatedBytes() - allocBefore) + " heapBytes=" + usedHeap() + " threads=" + threads
+          + " gcCount=" + (gcAfter.count - gcBefore.count) + " gcMs="
+          + (gcAfter.millis - gcBefore.millis) + " totalGcCount="
+          + (gcAfter.count - totalGcBefore.count) + " totalGcMs="
+          + (gcAfter.millis - totalGcBefore.millis) + " totalAllocMB="
+          + ((allocatedBytes() - totalAllocBefore) / 1048576));
+    }
   }
 
   private void report(final String workload, final boolean measure, final int units,
