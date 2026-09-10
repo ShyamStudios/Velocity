@@ -36,6 +36,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.player.ResourcePackInfo;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
+import com.velocitypowered.api.proxy.server.ServerPing;
 import com.velocitypowered.api.util.Favicon;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.api.util.ProxyVersion;
@@ -50,6 +51,7 @@ import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
+import com.velocitypowered.proxy.connection.util.StatusJsonCache;
 import com.velocitypowered.proxy.console.VelocityConsole;
 import com.velocitypowered.proxy.crypto.EncryptionUtils;
 import com.velocitypowered.proxy.event.VelocityEventManager;
@@ -969,6 +971,21 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     audiences.add(this.console);
     audiences.addAll(this.getAllPlayers());
     return audiences;
+  }
+
+  private final StatusJsonCache statusJsonCache = new StatusJsonCache();
+
+  /**
+   * Serializes a server ping for a status response, reusing the previous result when the
+   * identical ping repeats (common during list-ping floods). ProxyPingEvent still fires per
+   * request; only repeat serialization is skipped.
+   *
+   * @param version the protocol version in use
+   * @param ping the ping to serialize
+   * @return the JSON response
+   */
+  public String serializeStatusJson(final ProtocolVersion version, final ServerPing ping) {
+    return statusJsonCache.serialize(getPingGsonInstance(version), ping);
   }
 
   /**
