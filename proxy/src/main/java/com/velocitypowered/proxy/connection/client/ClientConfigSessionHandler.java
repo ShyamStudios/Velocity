@@ -139,7 +139,14 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
       ChannelIdentifier id = this.server.getChannelRegistrar().getFromId(packet.getChannel());
 
       if (id == null) {
-        serverConn.ensureConnected().write(packet.retain());
+        serverConn.ensureConnected().writeVoid(packet.retain());
+        return true;
+      }
+
+      if (!this.server.getEventManager().hasSubscribers(PluginMessageEvent.class)) {
+        // No plugin listens for plugin messages: forward untouched without
+        // copying the payload or hopping threads.
+        serverConn.ensureConnected().writeVoid(packet.retain());
         return true;
       }
 
@@ -151,7 +158,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
           .fire(new PluginMessageEvent(serverConn.getPlayer(), serverConn, id, bytes))
           .thenAcceptAsync(pme -> {
             if (pme.getResult().isAllowed() && serverConn.getConnection() != null) {
-              serverConn.ensureConnected().write(new PluginMessagePacket(
+              serverConn.ensureConnected().writeVoid(new PluginMessagePacket(
                   pme.getIdentifier().getId(), Unpooled.wrappedBuffer(bytes)));
             }
             serverConn.getPlayer().getConnection().setAutoReading(true);
@@ -166,7 +173,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
   @Override
   public boolean handle(PingIdentifyPacket packet) {
     if (player.getConnectionInFlight() != null) {
-      player.getConnectionInFlight().ensureConnected().write(packet);
+      player.getConnectionInFlight().ensureConnected().writeVoid(packet);
       return true;
     }
 
@@ -179,7 +186,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
       VelocityServerConnection targetServer =
           player.getConnectionInFlightOrConnectedServer();
       if (targetServer != null) {
-        targetServer.ensureConnected().write(packet);
+        targetServer.ensureConnected().writeVoid(packet);
       }
     }).exceptionally(ex -> {
       logger.error("Error forwarding known packs response to backend:", ex);
@@ -203,7 +210,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
                   ? event.getOriginalData() : event.getResult().getData();
 
               serverConnection.ensureConnected()
-                  .write(new ServerboundCookieResponsePacket(resultedKey, resultedData));
+                  .writeVoid(new ServerboundCookieResponsePacket(resultedKey, resultedData));
             }
           }
         }, player.getConnection().eventLoop());
@@ -215,7 +222,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
   public boolean handle(ServerboundCustomClickActionPacket packet) {
     VelocityServerConnection serverConnection = player.getConnectionInFlightOrConnectedServer();
     if (serverConnection != null) {
-      serverConnection.ensureConnected().write(packet.retain());
+      serverConnection.ensureConnected().writeVoid(packet.retain());
       return true;
     }
 
@@ -225,7 +232,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
   @Override
   public boolean handle(CodeOfConductAcceptPacket packet) {
     if (this.player.getConnectionInFlight() != null) {
-      this.player.getConnectionInFlight().ensureConnected().write(packet);
+      this.player.getConnectionInFlight().ensureConnected().writeVoid(packet);
       return true;
     }
 
@@ -245,7 +252,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
       if (packet instanceof ByteBufHolder bufHolder) {
         bufHolder.retain();
       }
-      smc.write(packet);
+      smc.writeVoid(packet);
     }
   }
 
@@ -259,7 +266,7 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
 
     final MinecraftConnection smc = serverConnection.getConnection();
     if (smc != null && !smc.isClosed() && serverConnection.getPhase().consideredComplete()) {
-      smc.write(buf.retain());
+      smc.writeVoid(buf.retain());
     }
   }
 
@@ -335,14 +342,14 @@ public class ClientConfigSessionHandler implements MinecraftSessionHandler {
       final ByteBuf buf = Unpooled.buffer();
       ProtocolUtils.writeString(buf, brand);
       final PluginMessagePacket brandPacket = new PluginMessagePacket(brandChannel, buf);
-      smc.write(brandPacket);
+      smc.writeVoid(brandPacket);
     }
 
     callConfigurationEvent().thenCompose(v -> {
       return server.getEventManager().fire(new PlayerFinishConfigurationEvent(player, serverConn))
           .completeOnTimeout(null, 5, TimeUnit.SECONDS);
     }).thenRunAsync(() -> {
-      player.getConnection().write(FinishedUpdatePacket.INSTANCE);
+      player.getConnection().writeVoid(FinishedUpdatePacket.INSTANCE);
       player.getConnection().getChannel().pipeline().get(MinecraftEncoder.class).setState(StateRegistry.PLAY);
       server.getEventManager().fireAndForget(new PlayerFinishedConfigurationEvent(player, serverConn));
     }, player.getConnection().eventLoop()).exceptionally(ex -> {

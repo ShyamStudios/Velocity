@@ -215,27 +215,28 @@ public final class SecurityConfig {
       throw new IOException("Unable to parse " + file + ": " + e.getMessage(), e);
     }
     if (loaded == null) {
+      appendMissingKeys(file, knownKeys());
       return DEFAULT;
     }
     if (!(loaded instanceof Map)) {
       throw new IOException(FILE_NAME + " must contain a key-value mapping.");
     }
+    final Map<?, ?> values = (Map<?, ?>) loaded;
+    appendMissingKeys(file, missingKeys(values));
     try {
-      return fromMap((Map<?, ?>) loaded);
+      return fromMap(values);
     } catch (final IllegalArgumentException e) {
       throw new IOException("Invalid " + file + ": " + e.getMessage(), e);
     }
   }
 
   /**
-   * Builds a configuration from already-parsed values, falling back to defaults per key.
+   * Returns every known configuration key.
    *
-   * @param values the parsed mapping
-   * @return the configuration
-   * @throws IllegalArgumentException on unknown keys or mistyped values
+   * @return known keys
    */
-  public static SecurityConfig fromMap(final Map<?, ?> values) {
-    final Set<String> known = new HashSet<>(List.of(
+  static Set<String> knownKeys() {
+    return new HashSet<>(List.of(
         "enabled",
         "max-concurrent-connections-per-ip",
         "max-new-connections-per-second-per-ip",
@@ -256,6 +257,136 @@ public final class SecurityConfig {
         "attack-detect-window-seconds",
         "attack-end-quiet-seconds",
         "attack-report-dir"));
+  }
+
+  private static Set<String> missingKeys(final Map<?, ?> values) {
+    final Set<String> missing = knownKeys();
+    for (final Object key : values.keySet()) {
+      missing.remove(String.valueOf(key));
+    }
+    return missing;
+  }
+
+  /**
+   * Appends absent keys (with defaults and short comments) to the end of an existing
+   * {@code secure.yml}. Existing values and comments are never touched; only keys
+   * introduced by newer versions are added. Failures are logged, never fatal.
+   *
+   * @param file the configuration file
+   * @param missing keys absent from the file
+   */
+  private static void appendMissingKeys(final Path file, final Set<String> missing) {
+    if (missing.isEmpty()) {
+      return;
+    }
+    try {
+      String existing = Files.readString(file);
+      final StringBuilder block = new StringBuilder();
+      if (!existing.isEmpty() && !existing.endsWith("\n")) {
+        block.append('\n');
+      }
+      block.append("\n# Added automatically: new options from a newer version, "
+          + "with default values.\n");
+      block.append("# Your existing settings above were left untouched.\n");
+      for (final String key : List.of(
+          "discord-webhook-url",
+          "attack-notify-start",
+          "attack-notify-end",
+          "attack-detect-threshold",
+          "attack-detect-window-seconds",
+          "attack-end-quiet-seconds",
+          "attack-report-dir")) {
+        if (missing.contains(key)) {
+          block.append(defaultComment(key));
+          block.append(key).append(": ").append(defaultYaml(key)).append('\n');
+        }
+      }
+      // Any other missing key (older option absent for any reason) is appended
+      // without a comment rather than skipped.
+      for (final String key : missing) {
+        if (!isDocumentedNewKey(key)) {
+          block.append(key).append(": ").append(defaultYaml(key)).append('\n');
+        }
+      }
+      Files.writeString(file, block.toString(),
+          java.nio.file.StandardOpenOption.APPEND);
+      logger.info("Added {} missing option(s) with defaults to {}: {}.",
+          missing.size(), file, String.join(", ", missing));
+    } catch (final Exception e) {
+      // The in-memory defaults still apply; the file just keeps its old shape.
+      logger.warn("Could not append missing options to {}, continuing with defaults.", file, e);
+    }
+  }
+
+  private static boolean isDocumentedNewKey(final String key) {
+    return switch (key) {
+      case "discord-webhook-url", "attack-notify-start", "attack-notify-end",
+          "attack-detect-threshold", "attack-detect-window-seconds", "attack-end-quiet-seconds",
+          "attack-report-dir" -> true;
+      default -> false;
+    };
+  }
+
+  private static String defaultComment(final String key) {
+    return switch (key) {
+      case "discord-webhook-url" -> "# Discord webhook for attack alerts (empty = disabled, "
+          + "file fallback still works).\n";
+      case "attack-notify-start" -> "# Alert when an attack starts.\n";
+      case "attack-notify-end" -> "# Send a summary when an attack ends.\n";
+      case "attack-detect-threshold" -> "# Blocked events within the window that declare an attack.\n";
+      case "attack-detect-window-seconds" -> "# Window in which blocked events are counted.\n";
+      case "attack-end-quiet-seconds" -> "# Quiet period before an attack is considered over.\n";
+      case "attack-report-dir" -> "# Directory for fallback attack-report files.\n";
+      default -> "";
+    };
+  }
+
+  private static String defaultYaml(final String key) {
+    final SecurityConfig defaults = DEFAULT;
+    return switch (key) {
+      case "enabled" -> Boolean.toString(defaults.enabled);
+      case "max-concurrent-connections-per-ip" ->
+          Integer.toString(defaults.maxConcurrentConnectionsPerIp);
+      case "max-new-connections-per-second-per-ip" ->
+          Integer.toString(defaults.maxNewConnectionsPerSecondPerIp);
+      case "new-connections-burst-per-ip" ->
+          Integer.toString(defaults.newConnectionsBurstPerIp);
+      case "max-concurrent-connections-global" ->
+          Integer.toString(defaults.maxConcurrentConnectionsGlobal);
+      case "max-new-connections-per-second-global" ->
+          Integer.toString(defaults.maxNewConnectionsPerSecondGlobal);
+      case "max-login-attempts-per-second-per-ip" ->
+          Integer.toString(defaults.maxLoginAttemptsPerSecondPerIp);
+      case "login-attempts-burst-per-ip" ->
+          Integer.toString(defaults.loginAttemptsBurstPerIp);
+      case "max-status-requests-per-second-per-ip" ->
+          Integer.toString(defaults.maxStatusRequestsPerSecondPerIp);
+      case "status-requests-burst-per-ip" ->
+          Integer.toString(defaults.statusRequestsBurstPerIp);
+      case "abuse-penalty-threshold" -> Integer.toString(defaults.abuseThreshold);
+      case "abuse-window-seconds" -> Integer.toString(defaults.abuseWindowSeconds);
+      case "abuse-penalty-seconds" -> Integer.toString(defaults.abusePenaltySeconds);
+      case "discord-webhook-url" -> "\"" + defaults.discordWebhookUrl + "\"";
+      case "attack-notify-start" -> Boolean.toString(defaults.attackNotifyStart);
+      case "attack-notify-end" -> Boolean.toString(defaults.attackNotifyEnd);
+      case "attack-detect-threshold" -> Integer.toString(defaults.attackDetectThreshold);
+      case "attack-detect-window-seconds" ->
+          Integer.toString(defaults.attackDetectWindowSeconds);
+      case "attack-end-quiet-seconds" -> Integer.toString(defaults.attackEndQuietSeconds);
+      case "attack-report-dir" -> "\"" + defaults.attackReportDir + "\"";
+      default -> throw new IllegalArgumentException("unknown key '" + key + "'");
+    };
+  }
+
+  /**
+   * Builds a configuration from already-parsed values, falling back to defaults per key.
+   *
+   * @param values the parsed mapping
+   * @return the configuration
+   * @throws IllegalArgumentException on unknown keys or mistyped values
+   */
+  public static SecurityConfig fromMap(final Map<?, ?> values) {
+    final Set<String> known = knownKeys();
     for (final Object key : values.keySet()) {
       if (!known.contains(String.valueOf(key))) {
         throw new IllegalArgumentException("unknown key '" + key + "'");

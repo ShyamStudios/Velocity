@@ -30,11 +30,14 @@ import com.velocitypowered.api.plugin.PluginDescription;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.QueryResponse;
 import com.velocitypowered.proxy.VelocityServer;
+import com.velocitypowered.proxy.security.SecurityMetrics;
+import com.velocitypowered.proxy.security.TokenBucket;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.DatagramPacket;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -73,8 +76,19 @@ public class GameSpyQueryHandler extends SimpleChannelInboundHandler<DatagramPac
       "hostip"
   );
 
-  private final Cache<InetAddress, Integer> sessions = Caffeine.newBuilder()
+  // Challenge sessions keyed by full socket address (IP + port): two monitors behind
+  // one NAT address must not share a challenge, and a spoofed handshake for one port
+  // must not authorize stats from another.
+  private final Cache<InetSocketAddress, Integer> sessions = Caffeine.newBuilder()
+      .maximumSize(4096)
       .expireAfterWrite(30, TimeUnit.SECONDS)
+      .build();
+  // Per-sender fuse on STAT replies: a small request can elicit a multi-kilobyte
+  // FULL response (player + plugin lists), which is reflector material. Legitimate
+  // monitors poll every tens of seconds and never notice this budget.
+  private final Cache<InetSocketAddress, TokenBucket> statLimits = Caffeine.newBuilder()
+      .maximumSize(4096)
+      .expireAfterWrite(60, TimeUnit.SECONDS)
       .build();
   private final SecureRandom random;
   private final VelocityServer server;
@@ -96,7 +110,7 @@ public class GameSpyQueryHandler extends SimpleChannelInboundHandler<DatagramPac
         .proxyHost(server.getConfiguration().getBind().getHostString())
         .players(server.getAllPlayers().stream().map(Player::getUsername)
             .collect(Collectors.toList()))
-        .proxyVersion("Velocity")
+        .proxyVersion("ShyamVelocity")
         .plugins(
             server.getConfiguration().shouldQueryShowPlugins() ? getRealPluginInformation()
                 : Collections.emptyList())
@@ -106,7 +120,8 @@ public class GameSpyQueryHandler extends SimpleChannelInboundHandler<DatagramPac
   @Override
   protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket msg) throws Exception {
     ByteBuf queryMessage = msg.content();
-    InetAddress senderAddress = msg.sender().getAddress();
+    InetSocketAddress sender = msg.sender();
+    InetAddress senderAddress = sender.getAddress();
 
     // Verify query packet magic
     if (queryMessage.readUnsignedByte() != QUERY_MAGIC_FIRST
@@ -122,7 +137,7 @@ public class GameSpyQueryHandler extends SimpleChannelInboundHandler<DatagramPac
       case QUERY_TYPE_HANDSHAKE -> {
         // Generate new challenge token and put it into the sessions cache
         int challengeToken = random.nextInt();
-        sessions.put(senderAddress, challengeToken);
+        sessions.put(sender, challengeToken);
 
         // Respond with challenge token
         ByteBuf queryResponse = ctx.alloc().buffer();
@@ -137,8 +152,16 @@ public class GameSpyQueryHandler extends SimpleChannelInboundHandler<DatagramPac
       case QUERY_TYPE_STAT -> {
         // Check if query was done with session previously generated using a handshake packet
         int challengeToken = queryMessage.readInt();
-        Integer session = sessions.getIfPresent(senderAddress);
+        Integer session = sessions.getIfPresent(sender);
         if (session == null || session != challengeToken) {
+          return;
+        }
+
+        // Fuse the (amplifying) STAT replies per sender. Excess queries are dropped
+        // silently: no reply means no reflector gain.
+        TokenBucket statLimit = statLimits.get(sender, ignored -> TokenBucket.perSecond(4, 8));
+        if (statLimit != null && !statLimit.tryConsume()) {
+          server.getSecurityMetrics().record(SecurityMetrics.Reason.QUERY_RATE_LIMITED);
           return;
         }
 

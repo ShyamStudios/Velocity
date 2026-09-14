@@ -26,8 +26,6 @@ import com.velocitypowered.proxy.protocol.packet.chat.ComponentHolder;
 import com.velocitypowered.proxy.protocol.packet.chat.RemoteChatSession;
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -87,12 +85,15 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
   @Override
   public void decode(ByteBuf buf, ProtocolUtils.Direction direction,
       ProtocolVersion protocolVersion) {
-    byte[] bytes = new byte[-Math.floorDiv(-ALL_ACTIONS.length, 8)];
-    buf.readBytes(bytes);
-    BitSet actionSet = BitSet.valueOf(bytes);
+    // Action bitmask, little-endian like BitSet.toByteArray. Read without allocating.
+    final int maskBytes = -Math.floorDiv(-ALL_ACTIONS.length, 8);
+    long mask = 0;
+    for (int i = 0; i < maskBytes; i++) {
+      mask |= (buf.readByte() & 0xFFL) << (i * 8);
+    }
 
     for (int idx = 0; idx < ALL_ACTIONS.length; idx++) {
-      if (actionSet.get(idx)) {
+      if ((mask & (1L << idx)) != 0) {
         addAction(ALL_ACTIONS[idx]);
       }
     }
@@ -110,13 +111,17 @@ public class UpsertPlayerInfoPacket implements MinecraftPacket {
   @Override
   public void encode(ByteBuf buf, ProtocolUtils.Direction direction,
       ProtocolVersion protocolVersion) {
-    BitSet set = new BitSet(ALL_ACTIONS.length);
+    long mask = 0;
     for (int idx = 0; idx < ALL_ACTIONS.length; idx++) {
-      set.set(idx, this.actions.contains(ALL_ACTIONS[idx]));
+      if (this.actions.contains(ALL_ACTIONS[idx])) {
+        mask |= 1L << idx;
+      }
     }
 
-    byte[] bytes = set.toByteArray();
-    buf.writeBytes(Arrays.copyOf(bytes, -Math.floorDiv(-ALL_ACTIONS.length, 8)));
+    final int maskBytes = -Math.floorDiv(-ALL_ACTIONS.length, 8);
+    for (int i = 0; i < maskBytes; i++) {
+      buf.writeByte((byte) (mask >>> (i * 8)));
+    }
 
     ProtocolUtils.writeVarInt(buf, this.entries.size());
     for (Entry entry : this.entries) {

@@ -34,6 +34,7 @@ import com.velocitypowered.proxy.config.migration.MotdMigration;
 import com.velocitypowered.proxy.config.migration.PacketLimiterMigration;
 import com.velocitypowered.proxy.config.migration.PingPassthroughMigration;
 import com.velocitypowered.proxy.config.migration.TransferIntegrationMigration;
+import com.velocitypowered.proxy.network.ProxyProtocolAllowlist;
 import com.velocitypowered.proxy.util.AddressUtil;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
@@ -43,6 +44,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -245,6 +247,43 @@ public class VelocityConfiguration implements ProxyConfig {
       valid = false;
     }
 
+    // Nonsense timeouts fail closed; a zero read timeout only warns (it is a supported
+    // way to disable the timeout) but it also disables the slowloris/half-open guard,
+    // so the operator should know what they are giving up.
+    if (advanced.connectionTimeout < 0) {
+      logger.error("Invalid connection timeout {}ms", advanced.connectionTimeout);
+      valid = false;
+    }
+    if (advanced.readTimeout < 0) {
+      logger.error("Invalid read timeout {}ms", advanced.readTimeout);
+      valid = false;
+    } else if (advanced.readTimeout == 0) {
+      logger.warn("Read timeout is disabled (0): half-open connections are never reaped, "
+          + "which removes the slowloris protection. Set a positive read-timeout unless "
+          + "you have an external mitigation.");
+    }
+    if (advanced.tabCompleteRateLimit < 0) {
+      logger.error("Invalid tab complete rate limit {}", advanced.tabCompleteRateLimit);
+      valid = false;
+    }
+
+    // PROXY-protocol allowlist entries must parse; a typo here must fail the start
+    // instead of silently leaving the header spoofable (or locking everyone out).
+    for (final String error : ProxyProtocolAllowlist
+        .validate(advanced.proxyProtocolAllowedNetworks)) {
+      logger.error("Invalid proxy-protocol-allowed-networks entry: {}", error);
+      valid = false;
+    }
+    if (!advanced.proxyProtocolAllowedNetworks.isEmpty() && !advanced.proxyProtocol) {
+      logger.warn("proxy-protocol-allowed-networks is set but (haproxy-)proxy-protocol is "
+          + "disabled: the allowlist has no effect until PROXY protocol is enabled.");
+    }
+    if (advanced.kickAfterRateLimitedTabCompletes < 0) {
+      logger.error("Invalid kick-after-rate-limited-tab-completes {}",
+          advanced.kickAfterRateLimitedTabCompletes);
+      valid = false;
+    }
+
     loadFavicon();
 
     return valid;
@@ -397,6 +436,16 @@ public class VelocityConfiguration implements ProxyConfig {
 
   public void setProxyProtocol(boolean proxyProtocol) {
     advanced.setProxyProtocol(proxyProtocol);
+  }
+
+  /**
+   * Returns the pre-compiled PROXY-protocol trusted-source allowlist. An open
+   * allowlist honors headers from any direct peer (historical behavior).
+   *
+   * @return compiled allowlist, refreshed on every config (re)load
+   */
+  public ProxyProtocolAllowlist.Compiled getProxyProtocolAllowlist() {
+    return advanced.getProxyProtocolAllowlist();
   }
 
   public boolean useTcpFastOpen() {
@@ -763,6 +812,9 @@ public class VelocityConfiguration implements ProxyConfig {
     private int readTimeout = 30000;
     @Expose
     private boolean proxyProtocol = false;
+    private List<String> proxyProtocolAllowedNetworks = new ArrayList<>();
+    private transient ProxyProtocolAllowlist.Compiled proxyProtocolAllowlist =
+        ProxyProtocolAllowlist.compile(null);
     @Expose
     private boolean tcpFastOpen = false;
     @Expose
@@ -807,6 +859,10 @@ public class VelocityConfiguration implements ProxyConfig {
         } else {
           this.proxyProtocol = config.getOrElse("proxy-protocol", false);
         }
+        this.proxyProtocolAllowedNetworks = readStringList(
+            config.get("proxy-protocol-allowed-networks"));
+        this.proxyProtocolAllowlist =
+            ProxyProtocolAllowlist.compile(this.proxyProtocolAllowedNetworks);
         this.tcpFastOpen = config.getOrElse("tcp-fast-open", false);
         this.bungeePluginMessageChannel = config.getOrElse("bungee-plugin-message-channel", true);
         this.showPingRequests = config.getOrElse("show-ping-requests", false);
@@ -851,6 +907,44 @@ public class VelocityConfiguration implements ProxyConfig {
 
     public void setProxyProtocol(boolean proxyProtocol) {
       this.proxyProtocol = proxyProtocol;
+    }
+
+    /**
+     * Returns the configured PROXY-protocol trusted sources. Empty means every direct
+     * peer may send the header (historical behavior).
+     *
+     * @return immutable list of IP/CIDR entries
+     */
+    public List<String> getProxyProtocolAllowedNetworks() {
+      return proxyProtocolAllowedNetworks;
+    }
+
+    /**
+     * Returns the pre-compiled PROXY-protocol allowlist for per-connection checks.
+     *
+     * @return compiled allowlist
+     */
+    public ProxyProtocolAllowlist.Compiled getProxyProtocolAllowlist() {
+      return proxyProtocolAllowlist;
+    }
+
+    /**
+     * Reads an optional TOML string array defensively: missing gives an empty list,
+     * non-string entries are stringified so validation can report them.
+     *
+     * @param value raw config value
+     * @return immutable list of entries
+     */
+    private static List<String> readStringList(final Object value) {
+      if (!(value instanceof List)) {
+        return List.of();
+      }
+      final List<?> raw = (List<?>) value;
+      final List<String> out = new ArrayList<>(raw.size());
+      for (final Object entry : raw) {
+        out.add(entry == null ? "" : String.valueOf(entry));
+      }
+      return List.copyOf(out);
     }
 
     public boolean isTcpFastOpen() {

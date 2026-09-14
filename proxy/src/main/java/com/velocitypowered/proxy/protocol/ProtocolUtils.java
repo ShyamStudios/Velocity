@@ -318,13 +318,40 @@ public enum ProtocolUtils {
   /**
    * Writes the specified {@code str} to the {@code buf} with a VarInt prefix.
    *
+   * <p>Short strings take a single-pass fast path: when the VarInt length prefix size is
+   * fully determined by the character count (at most 42 chars always fits in one byte,
+   * 128-5461 chars always takes exactly two bytes), the prefix is reserved and the UTF-8
+   * bytes are encoded once via {@link ByteBufUtil#writeUtf8}. Longer or ambiguous strings
+   * use the classic two-pass encoding. Output bytes are identical either way.</p>
+   *
    * @param buf the buffer to write to
    * @param str the string to write
    */
   public static void writeString(ByteBuf buf, CharSequence str) {
-    int size = ByteBufUtil.utf8Bytes(str);
-    writeVarInt(buf, size);
-    buf.writeCharSequence(str, StandardCharsets.UTF_8);
+    final int charCount = str.length();
+    final int prefixBytes;
+    if (charCount <= 42) {
+      // UTF-8 length is within [charCount, charCount * 3] <= 127: 1-byte prefix, exact.
+      prefixBytes = 1;
+    } else if (charCount >= 128 && charCount <= 5461) {
+      // UTF-8 length is within [128, 16383]: 2-byte prefix, exact.
+      prefixBytes = 2;
+    } else {
+      int size = ByteBufUtil.utf8Bytes(str);
+      writeVarInt(buf, size);
+      buf.writeCharSequence(str, StandardCharsets.UTF_8);
+      return;
+    }
+    buf.ensureWritable(prefixBytes + charCount * 3);
+    final int lengthPos = buf.writerIndex();
+    buf.writerIndex(lengthPos + prefixBytes);
+    final int written = ByteBufUtil.writeUtf8(buf, str);
+    if (prefixBytes == 1) {
+      buf.setByte(lengthPos, written);
+    } else {
+      buf.setByte(lengthPos, (written & 0x7F) | 0x80);
+      buf.setByte(lengthPos + 1, written >>> 7);
+    }
   }
 
   /**

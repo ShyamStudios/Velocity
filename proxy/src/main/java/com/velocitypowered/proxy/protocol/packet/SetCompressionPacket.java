@@ -63,4 +63,10 @@ public class SetCompressionPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Single varint, never more than 5 bytes.
+    return 5;
+  }
 }

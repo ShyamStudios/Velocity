@@ -217,13 +217,13 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     String implVersion;
     String implVendor;
     if (pkg != null) {
-      implName = MoreObjects.firstNonNull(pkg.getImplementationTitle(), "Velocity");
+      implName = MoreObjects.firstNonNull(pkg.getImplementationTitle(), "ShyamVelocity");
       implVersion = MoreObjects.firstNonNull(pkg.getImplementationVersion(), "<unknown>");
-      implVendor = MoreObjects.firstNonNull(pkg.getImplementationVendor(), "Velocity Contributors");
+      implVendor = MoreObjects.firstNonNull(pkg.getImplementationVendor(), "ShyamVelocity");
     } else {
-      implName = "Velocity";
+      implName = "ShyamVelocity";
       implVersion = "<unknown>";
-      implVendor = "Velocity Contributors";
+      implVendor = "ShyamVelocity";
     }
 
     return new ProxyVersion(implName, implVendor, implVersion);
@@ -232,7 +232,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private VelocityPluginContainer createVirtualPlugin() {
     ProxyVersion version = getVersion();
     PluginDescription description = new VelocityPluginDescription(
-        "velocity", version.getName(), version.getVersion(), "The Velocity proxy",
+        "velocity", version.getName(), version.getVersion(), "The ShyamVelocity proxy",
             version.getName().equals("Velocity") ? VELOCITY_URL : null,
             ImmutableList.of(version.getVendor()), Collections.emptyList(),
             Collections.emptyList(), null);

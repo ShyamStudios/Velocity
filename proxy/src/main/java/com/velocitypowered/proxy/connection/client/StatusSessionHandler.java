@@ -28,6 +28,7 @@ import com.velocitypowered.proxy.protocol.packet.StatusPingPacket;
 import com.velocitypowered.proxy.protocol.packet.StatusRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.StatusResponsePacket;
 import com.velocitypowered.proxy.security.ConnectionRateLimiter;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.util.except.QuietRuntimeException;
 import io.netty.buffer.ByteBuf;
 import org.apache.logging.log4j.LogManager;
@@ -89,6 +90,18 @@ public class StatusSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(StatusPingPacket packet) {
+    if (!checkStatusRate()) {
+      connection.close();
+      return true;
+    }
+    if (!this.pingReceived) {
+      // A ping with no preceding request is a scanner or a malformed client:
+      // legitimate clients always send a status request first. Count it for the
+      // attack monitor, then close without answering instead of echoing back.
+      server.getSecurityMetrics().record(SecurityMetrics.Reason.STATUS_PING_REJECTED);
+      connection.close(true);
+      return true;
+    }
     connection.closeWith(packet);
     return true;
   }
@@ -111,7 +124,7 @@ public class StatusSessionHandler implements MinecraftSessionHandler {
               if (event.getResult().isAllowed()) {
                 final String json = server.serializeStatusJson(
                     connection.getProtocolVersion(), event.getPing());
-                connection.write(new StatusResponsePacket(json));
+                connection.writeVoid(new StatusResponsePacket(json));
               } else {
                 connection.close();
               }

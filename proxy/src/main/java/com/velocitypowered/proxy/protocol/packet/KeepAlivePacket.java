@@ -90,4 +90,10 @@ public class KeepAlivePacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // long (1.12.2+), varint (1.8+), or int: never more than 8 bytes.
+    return 8;
+  }
 }

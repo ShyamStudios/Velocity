@@ -20,8 +20,8 @@ tasks {
 
     jar {
         manifest {
-            attributes["Implementation-Title"] = "Velocity"
-            attributes["Implementation-Vendor"] = "Velocity Contributors"
+            attributes["Implementation-Title"] = "ShyamVelocity"
+            attributes["Implementation-Vendor"] = "ShyamVelocity"
             attributes["Multi-Release"] = "true"
         }
     }

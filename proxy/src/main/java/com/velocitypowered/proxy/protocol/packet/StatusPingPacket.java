@@ -52,4 +52,9 @@ public class StatusPingPacket implements MinecraftPacket {
   public int decodeExpectedMinLength(ByteBuf buf, Direction direction, ProtocolVersion version) {
     return 8;
   }
+
+  @Override
+  public int encodeSizeHint(Direction direction, ProtocolVersion version) {
+    return 8;
+  }
 }

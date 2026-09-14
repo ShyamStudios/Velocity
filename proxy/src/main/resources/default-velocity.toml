@@ -131,6 +131,13 @@ read-timeout = 30000
 # don't enable it.
 haproxy-protocol = false
 
+# Trusted sources allowed to send the PROXY header: your load balancers, as plain
+# IPs or CIDR ranges. Anyone else connecting directly is closed immediately, so a
+# stranger can no longer spoof anyone's address (bans, rate limits, forwarded IPs).
+# Empty (default) allows everyone, exactly like before — set this when you enable
+# haproxy-protocol above. Example: ["10.0.0.0/8", "203.0.113.4", "2001:db8::/32"]
+proxy-protocol-allowed-networks = []
+
 # Enables TCP fast open support on the proxy. Requires the proxy to run on Linux.
 tcp-fast-open = false
 

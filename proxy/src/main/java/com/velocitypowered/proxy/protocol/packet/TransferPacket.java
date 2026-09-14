@@ -61,4 +61,10 @@ public class TransferPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Host string plus a varint port.
+    return ProtocolUtils.stringSizeHint(host) + 5;
+  }
 }

@@ -52,7 +52,19 @@ public final class SecurityMetrics {
     /** Malformed protocol input failed validation. */
     MALFORMED_PACKET,
     /** Malformed backend (plugin-channel) message ignored. */
-    MALFORMED_BACKEND_MESSAGE
+    MALFORMED_BACKEND_MESSAGE,
+    /** Backend-initiated action shed by a rate fuse (e.g. Forward floods). */
+    BACKEND_RATE_LIMITED,
+    /** Handshake dropped for an impossible value (empty host, port 0, controls). */
+    HANDSHAKE_REJECTED,
+    /** Duplicate/out-of-order login packet dropped (replay guard). */
+    LOGIN_REPLAYED,
+    /** Status ping dropped (no preceding request, or over the status budget). */
+    STATUS_PING_REJECTED,
+    /** GameSpy query STAT reply shed by the per-sender fuse. */
+    QUERY_RATE_LIMITED,
+    /** Connection closed: untrusted peer on a PROXY-protocol listener. */
+    PROXY_SPOOFED
   }
 
   private static final long LOG_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);

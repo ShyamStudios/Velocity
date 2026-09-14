@@ -120,6 +120,26 @@ class SecurityConfigTest {
   }
 
   @Test
+  void loadAppendsMissingKeysWithoutTouchingExisting(@TempDir final Path dir) throws IOException {
+    final Path file = dir.resolve("secure.yml");
+    Files.writeString(file, "# my comment\nmax-concurrent-connections-per-ip: 9\n");
+    final SecurityConfig config = SecurityConfig.load(file);
+    assertEquals(9, config.getMaxConcurrentConnectionsPerIp());
+    assertEquals(SecurityConfig.DEFAULT.getAttackDetectThreshold(),
+        config.getAttackDetectThreshold());
+    final String after = Files.readString(file);
+    assertTrue(after.startsWith("# my comment\nmax-concurrent-connections-per-ip: 9\n"),
+        "existing content and comments must be preserved");
+    assertTrue(after.contains("discord-webhook-url: \"\""),
+        "missing keys must be appended with defaults");
+    assertTrue(after.contains("attack-report-dir: \"attack-reports\""));
+    // Loading again must be a no-op (no duplicate blocks).
+    SecurityConfig.load(file);
+    final String twice = Files.readString(file);
+    assertEquals(after, twice, "second load must not append again");
+  }
+
+  @Test
   void loadRejectsGarbage(@TempDir final Path dir) throws IOException {
     final Path file = dir.resolve("secure.yml");
     Files.writeString(file, "max-concurrent-connections-per-ip: [unclosed\n");

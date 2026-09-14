@@ -144,6 +144,12 @@ public class ResourcePackRequestPacket implements MinecraftPacket {
   }
 
   @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // UUID plus url/hash strings; prompt component is rare and grows on demand.
+    return 24 + ProtocolUtils.stringSizeHint(url) + ProtocolUtils.stringSizeHint(hash);
+  }
+
+  @Override
   public String toString() {
     return "ResourcePackRequestPacket{" +
             "id=" + id +

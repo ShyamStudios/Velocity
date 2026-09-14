@@ -107,6 +107,12 @@ public class EncryptionResponsePacket implements MinecraftPacket {
   }
 
   @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Length-prefixed secret and token blobs plus salt flag.
+    return sharedSecret.length + verifyToken.length + 16;
+  }
+
+  @Override
   public int decodeExpectedMaxLength(ByteBuf buf, Direction direction, ProtocolVersion version) {
     // It turns out these come out to the same length, whether we're talking >=1.8 or not.
     // The length prefix always winds up being 2 bytes.

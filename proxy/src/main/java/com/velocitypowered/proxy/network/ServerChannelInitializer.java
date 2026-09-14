@@ -39,6 +39,7 @@ import com.velocitypowered.proxy.protocol.netty.MinecraftDecoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftEncoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftVarintFrameDecoder;
 import com.velocitypowered.proxy.protocol.netty.MinecraftVarintLengthEncoder;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.handler.codec.haproxy.HAProxyMessageDecoder;
@@ -59,6 +60,18 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
 
   @Override
   protected void initChannel(final Channel ch) {
+    if (this.server.getConfiguration().isProxyProtocol()
+        && !ProxyProtocolAllowlist.isAllowed(
+            this.server.getConfiguration().getProxyProtocolAllowlist(),
+            ch.remoteAddress())) {
+      // Untrusted direct peer on a PROXY-protocol listener: its header would be a
+      // lie, so count it for the attack monitor and close before any limiter,
+      // framing, or decoding work. Peers inside the allowlist (or everyone, when
+      // it is empty) proceed as before.
+      this.server.getSecurityMetrics().record(SecurityMetrics.Reason.PROXY_SPOOFED);
+      ch.close();
+      return;
+    }
     ch.pipeline()
         // Cheapest abuse check first: shed floods before any framing or decoding work.
         .addLast(CONNECTION_LIMIT, new ConnectionLimitHandler(server))

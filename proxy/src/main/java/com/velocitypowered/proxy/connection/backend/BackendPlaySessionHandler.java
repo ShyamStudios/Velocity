@@ -317,6 +317,13 @@ public class BackendPlaySessionHandler implements MinecraftSessionHandler {
       return false;
     }
 
+    if (!server.getEventManager().hasSubscribers(PluginMessageEvent.class)) {
+      // No plugin listens for plugin messages: forward untouched without copying
+      // the payload or hopping threads.
+      playerConnection.writeVoid(packet.retain());
+      return true;
+    }
+
     byte[] copy = ByteBufUtil.getBytes(packet.content());
     PluginMessageEvent event = new PluginMessageEvent(serverConn, serverConn.getPlayer(), id, copy);
     server.getEventManager().fire(event).thenAcceptAsync(pme -> {

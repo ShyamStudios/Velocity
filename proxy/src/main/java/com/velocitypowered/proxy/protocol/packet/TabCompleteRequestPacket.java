@@ -139,4 +139,10 @@ public class TabCompleteRequestPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Transaction id, command string, and legacy position fields.
+    return 15 + ProtocolUtils.stringSizeHint(command);
+  }
 }

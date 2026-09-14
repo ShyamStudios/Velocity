@@ -93,4 +93,10 @@ public class EncryptionRequestPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Server id plus length-prefixed key and token blobs.
+    return ProtocolUtils.stringSizeHint(serverId) + publicKey.length + verifyToken.length + 16;
+  }
 }

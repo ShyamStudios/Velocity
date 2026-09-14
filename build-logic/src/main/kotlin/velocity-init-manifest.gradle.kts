@@ -8,14 +8,19 @@ interface Injected {
     val execOps: ExecOperations
 }
 
-val currentShortRevision = ByteArrayOutputStream().use {
-    val execOps = objects.newInstance<Injected>().execOps
-    execOps.exec {
-        executable = "git"
-        args = listOf("rev-parse", "HEAD")
-        standardOutput = it
+val currentShortRevision = try {
+    ByteArrayOutputStream().use {
+        val execOps = objects.newInstance<Injected>().execOps
+        execOps.exec {
+            executable = "git"
+            args = listOf("rev-parse", "HEAD")
+            standardOutput = it
+        }
+        it.toString().trim().substring(0, 8)
     }
-    it.toString().trim().substring(0, 8)
+} catch (e: Exception) {
+    // Fallback when git is unavailable (e.g. building from an exported tree on Windows).
+    "00000000"
 }
 
 tasks.withType<Jar> {

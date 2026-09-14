@@ -106,6 +106,12 @@ public class ResourcePackResponsePacket implements MinecraftPacket {
   }
 
   @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // UUID plus status varint; legacy hash string grows on demand.
+    return 21 + ProtocolUtils.stringSizeHint(hash);
+  }
+
+  @Override
   public String toString() {
     return "ResourcePackResponsePacket{" +
             "id=" + id +

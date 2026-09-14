@@ -427,7 +427,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     Preconditions.checkNotNull(message, "message");
     final Component translated = translateMessage(message);
 
-    connection.write(getChatBuilderFactory().builder()
+    connection.writeVoid(getChatBuilderFactory().builder()
         .component(translated).toClient());
   }
 
@@ -441,7 +441,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       GenericTitlePacket pkt = GenericTitlePacket.constructTitlePacket(
           GenericTitlePacket.ActionType.SET_ACTION_BAR, playerVersion);
       pkt.setComponent(new ComponentHolder(playerVersion, translated));
-      connection.write(pkt);
+      connection.writeVoid(pkt);
     } else {
       // Due to issues with action bar packets, we'll need to convert the text message into a
       // legacy message and then inject the legacy text into a component... yuck!
@@ -451,7 +451,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
       LegacyChatPacket legacyChat = new LegacyChatPacket();
       legacyChat.setMessage(object.toString());
       legacyChat.setType(LegacyChatPacket.GAME_INFO_TYPE);
-      connection.write(legacyChat);
+      connection.writeVoid(legacyChat);
     }
   }
 
@@ -996,7 +996,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     Preconditions.checkNotNull(data, "data");
     final PluginMessagePacket message = new PluginMessagePacket(identifier.getId(),
             Unpooled.wrappedBuffer(data));
-    connection.write(message);
+    connection.writeVoid(message);
     return true;
   }
 
@@ -1012,7 +1012,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
     dataEncoder.encode(dataOutput);
     if (buf.isReadable()) {
       final PluginMessagePacket message = new PluginMessagePacket(identifier.getId(), buf);
-      connection.write(message);
+      connection.writeVoid(message);
       return true;
     } else {
       buf.release();
@@ -1316,7 +1316,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
         || connection.getState() == StateRegistry.CONFIG) {
       KeepAlivePacket keepAlive = new KeepAlivePacket();
       keepAlive.setRandomId(ThreadLocalRandom.current().nextLong());
-      connection.write(keepAlive);
+      connection.writeVoid(keepAlive);
     }
   }
 
@@ -1343,7 +1343,7 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
             && (clientState == StateRegistry.CONFIG || clientState == StateRegistry.PLAY);
         if (stateAllowsForward) {
           setPing(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sentTime));
-          smc.write(packet);
+          smc.writeVoid(packet);
         }
         // We removed this, and so this is ours
         return true;
@@ -1366,9 +1366,9 @@ public class ConnectedPlayer implements MinecraftConnectionAssociation, Player, 
 
           if (bundleHandler.isInBundleSession()) {
             bundleHandler.toggleBundleSession();
-            connection.write(BundleDelimiterPacket.INSTANCE);
+            connection.writeVoid(BundleDelimiterPacket.INSTANCE);
           }
-          connection.write(StartUpdatePacket.INSTANCE);
+          connection.writeVoid(StartUpdatePacket.INSTANCE);
           connection.pendingConfigurationSwitch = true;
           connection.getChannel().pipeline().get(MinecraftEncoder.class).setState(StateRegistry.CONFIG);
           // Make sure we don't send any play packets to the player after update start

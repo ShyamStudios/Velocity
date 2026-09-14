@@ -69,11 +69,23 @@ public final class AttackMonitor {
    * Point-in-time memory reading. All sizes in bytes; {@code -1} means unavailable.
    */
   public static final class MemSnapshot {
+    /** JVM heap currently in use, in bytes. */
     public final long heapUsed;
+    /** JVM heap limit, in bytes ({@code <= 0} when unknown). */
     public final long heapMax;
+    /** Physical machine memory, in bytes ({@code -1} when unavailable). */
     public final long systemTotal;
+    /** Free physical machine memory, in bytes ({@code -1} when unavailable). */
     public final long systemFree;
 
+    /**
+     * Creates a memory snapshot.
+     *
+     * @param heapUsed bytes of JVM heap in use
+     * @param heapMax bytes of JVM heap limit
+     * @param systemTotal bytes of physical memory
+     * @param systemFree bytes of free physical memory
+     */
     public MemSnapshot(final long heapUsed, final long heapMax,
         final long systemTotal, final long systemFree) {
       this.heapUsed = heapUsed;
@@ -531,6 +543,12 @@ public final class AttackMonitor {
       case PENALIZED -> "Repeat-Offender Flood (penalized sources)";
       case MALFORMED_PACKET -> "Malformed Packet Flood";
       case MALFORMED_BACKEND_MESSAGE -> "Backend Malformed-Message Flood";
+      case BACKEND_RATE_LIMITED -> "Backend Action Flood (rate-limited)";
+      case HANDSHAKE_REJECTED -> "Handshake Garbage (bad host/port)";
+      case LOGIN_REPLAYED -> "Login Replay (duplicate packets)";
+      case STATUS_PING_REJECTED -> "Status Ping Abuse (no request)";
+      case QUERY_RATE_LIMITED -> "Query Flood (rate-limited)";
+      case PROXY_SPOOFED -> "PROXY Spoof Attempt (untrusted peer)";
     };
   }
 

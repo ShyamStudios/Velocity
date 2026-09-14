@@ -251,6 +251,22 @@ public class MinecraftConnection extends ChannelInboundHandlerAdapter {
   }
 
   /**
+   * Writes and immediately flushes a message to the connection without allocating
+   * a promise. Use only for fire-and-forget messages whose completion or failure
+   * is never observed (the returned future of {@link #write(Object)} is ignored
+   * at these sites). Behavior is otherwise identical to {@link #write(Object)}.
+   *
+   * @param msg the message to write
+   */
+  public void writeVoid(Object msg) {
+    if (channel.isActive()) {
+      channel.writeAndFlush(msg, channel.voidPromise());
+    } else {
+      ReferenceCountUtil.release(msg);
+    }
+  }
+
+  /**
    * Writes, but does not flush, a message to the connection.
    *
    * @param msg the message to write

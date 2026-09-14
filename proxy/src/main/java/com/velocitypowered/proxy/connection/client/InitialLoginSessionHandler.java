@@ -40,6 +40,7 @@ import com.velocitypowered.proxy.protocol.packet.EncryptionRequestPacket;
 import com.velocitypowered.proxy.protocol.packet.EncryptionResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.LoginPluginResponsePacket;
 import com.velocitypowered.proxy.protocol.packet.ServerLoginPacket;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.buffer.ByteBuf;
 import java.net.InetSocketAddress;
@@ -90,7 +91,11 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(ServerLoginPacket packet) {
-    assertState(LoginState.LOGIN_PACKET_EXPECTED);
+    if (!checkState(LoginState.LOGIN_PACKET_EXPECTED)) {
+      // Duplicate or out-of-order login: connection is being closed, drop the packet
+      // instead of firing PreLoginEvent and RSA work a second time.
+      return true;
+    }
     this.currentState = LoginState.LOGIN_PACKET_RECEIVED;
     IdentifiedKey playerKey = packet.getPlayerKey();
     if (playerKey != null) {
@@ -159,6 +164,9 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
       });
     }, mcConnection.eventLoop()).exceptionally((ex) -> {
       logger.error("Exception in pre-login stage", ex);
+      // Never leave the connection hanging on a plugin exception: free the slot
+      // instead of holding it until read-timeout.
+      mcConnection.close(true);
       return null;
     });
 
@@ -173,7 +181,11 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(EncryptionResponsePacket packet) {
-    assertState(LoginState.ENCRYPTION_REQUEST_SENT);
+    if (!checkState(LoginState.ENCRYPTION_REQUEST_SENT)) {
+      // Duplicate or out-of-order response: connection is being closed, drop the
+      // packet instead of running RSA decrypts and Mojang calls again.
+      return true;
+    }
     this.currentState = LoginState.ENCRYPTION_RESPONSE_RECEIVED;
     ServerLoginPacket login = this.login;
     if (login == null) {
@@ -291,15 +303,25 @@ public class InitialLoginSessionHandler implements MinecraftSessionHandler {
     this.inbound.cleanup();
   }
 
-  private void assertState(LoginState expectedState) {
+  /**
+   * Verifies the login state machine position. On mismatch the connection is closed
+   * and the caller must drop the packet without further processing.
+   *
+   * @param expectedState the required state
+   * @return {@code true} if processing may continue
+   */
+  private boolean checkState(LoginState expectedState) {
     if (this.currentState != expectedState) {
       if (MinecraftDecoder.DEBUG) {
         logger.error("{} Received an unexpected packet requiring state {}, but we are in {}",
             inbound,
             expectedState, this.currentState);
       }
+      server.getSecurityMetrics().record(SecurityMetrics.Reason.LOGIN_REPLAYED);
       mcConnection.close(true);
+      return false;
     }
+    return true;
   }
 
   private enum LoginState {

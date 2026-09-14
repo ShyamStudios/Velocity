@@ -192,7 +192,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         server.getChannelRegistrar().getChannelsForProtocol(player.getProtocolVersion());
     if (!channels.isEmpty()) {
       PluginMessagePacket register = constructChannelsPacket(player.getProtocolVersion(), channels);
-      player.getConnection().write(register);
+      player.getConnection().writeVoid(register);
     }
   }
 
@@ -247,7 +247,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       // No server connection yet, probably transitioning.
       return true;
     }
-    player.getConnectedServer().ensureConnected().write(packet);
+    player.getConnectedServer().ensureConnected().writeVoid(packet);
     return true; // will forward onto the server
   }
 
@@ -386,7 +386,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         server.getEventManager()
             .fireAndForget(
                 new PlayerChannelRegisterEvent(player, ImmutableList.copyOf(channels)));
-        backendConn.write(packet.retain());
+        backendConn.writeVoid(packet.retain());
       } else if (PluginMessageUtil.isUnregister(packet)) {
         List<ChannelIdentifier> channels =
             PluginMessageUtil.getChannels(0, packet, this.player.getProtocolVersion());
@@ -394,12 +394,12 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
         server.getEventManager()
             .fireAndForget(
                 new PlayerChannelUnregisterEvent(player, ImmutableList.copyOf(channels)));
-        backendConn.write(packet.retain());
+        backendConn.writeVoid(packet.retain());
       } else if (PluginMessageUtil.isMcBrand(packet)) {
         String brand = PluginMessageUtil.readBrandMessage(packet.content());
         server.getEventManager().fireAndForget(new PlayerClientBrandEvent(player, brand));
         player.setClientBrand(brand);
-        backendConn.write(packet.retain());
+        backendConn.writeVoid(packet.retain());
       } else if (BungeeCordMessageResponder.isBungeeCordMessage(packet)) {
         return true;
       } else {
@@ -428,8 +428,12 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
               enqueueLoginPluginMessage(packet.retain());
             } else {
               // The connection is ready, send the packet now.
-              backendConn.write(packet.retain());
+              backendConn.writeVoid(packet.retain());
             }
+          } else if (!server.getEventManager().hasSubscribers(PluginMessageEvent.class)) {
+            // No plugin listens for plugin messages: forward untouched without
+            // copying the payload or hopping threads.
+            backendConn.writeVoid(packet.retain());
           } else {
             byte[] copy = ByteBufUtil.getBytes(packet.content());
             PluginMessageEvent event = new PluginMessageEvent(player, serverConn, id, copy);
@@ -442,7 +446,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
                   // We're still processing the connection (see above), enqueue the packet for now.
                   enqueueLoginPluginMessage(message.retain());
                 } else {
-                  backendConn.write(message);
+                  backendConn.writeVoid(message);
                 }
               }
             }, backendConn.eventLoop()).exceptionally((ex) -> {
@@ -478,7 +482,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
     if (serverConnection != null) {
       MinecraftConnection smc = serverConnection.ensureConnected();
       CompletableFuture.runAsync(() -> {
-        smc.write(packet);
+        smc.writeVoid(packet);
         smc.setActiveSessionHandler(StateRegistry.CONFIG);
         smc.setAutoReading(true);
       }, smc.eventLoop()).exceptionally((ex) -> {
@@ -852,7 +856,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
             resp.setStart(startPos + 1);
             resp.setLength(packet.getCommand().length() - startPos - 1);
             resp.getOffers().addAll(offers);
-            player.getConnection().write(resp);
+            player.getConnection().writeVoid(resp);
           }
         }, player.getConnection().eventLoop()).exceptionally((ex) -> {
           logger.error("Exception while handling command tab completion for player {} executing {}",
@@ -886,7 +890,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       outstandingTabComplete = null;
     } else {
       // Nothing to do
-      player.getConnection().write(response);
+      player.getConnection().writeVoid(response);
     }
   }
 
@@ -913,7 +917,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
               response.getOffers().add(new Offer(offer, tooltip));
             }
             response.getOffers().sort(null);
-            player.getConnection().write(response);
+            player.getConnection().writeVoid(response);
           } catch (Exception e) {
             logger.error("Unable to provide tab list completions for {} for command '{}'",
                 player.getUsername(), command,
@@ -940,7 +944,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
           for (String s : e.getSuggestions()) {
             response.getOffers().add(new Offer(s));
           }
-          player.getConnection().write(response);
+          player.getConnection().writeVoid(response);
         }, player.getConnection().eventLoop()).exceptionally((ex) -> {
           logger.error(
               "Exception while finishing regular tab completion,"
@@ -960,7 +964,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       if (connection != null) {
         PluginMessagePacket pm;
         while ((pm = loginPluginMessages.poll()) != null) {
-          connection.write(pm);
+          connection.writeVoid(pm);
         }
         loginPluginMessagesBytes.set(0);
         loginPluginMessagesCount.set(0);

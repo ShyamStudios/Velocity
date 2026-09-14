@@ -44,8 +44,11 @@ trivial evasion by rotating the low bits while keeping unrelated networks apart.
 - **HAProxy PROXY protocol:** per-source TCP-stage limits see the load balancer
   address, so they are skipped in that mode (only the proxy-wide backstop
   applies at TCP time). Handshake-time login/status limits still use the true
-  client address from the PROXY header. Firewall the listener so headers cannot
-  be spoofed.
+  client address from the PROXY header. Set
+  `advanced.proxy-protocol-allowed-networks` to your load balancers (IPs/CIDRs;
+  empty allows everyone, as before) — direct peers outside it are closed before
+  any header is read, so strangers cannot spoof addresses. Firewall the listener
+  as well, as defense in depth.
 - **NAT tradeoffs:** per-source limits and temporary penalties are shared by
   everyone behind one address. Thresholds are set so normal shared use never
   trips them; a sustained attack from behind the same NAT will affect that
@@ -68,6 +71,30 @@ trivial evasion by rotating the low bits while keeping unrelated networks apart.
   `attack-report-dir` as `attack-yyyyMMdd-HHmmss-<TYPE>.json`. The webhook URL is
   never logged. `/velocity reload` picks up new alert settings without losing
   in-flight attack state.
+
+## Further hardened paths
+
+- **Login state machine:** duplicate/out-of-order `ServerLogin` and
+  `EncryptionResponse` packets close the connection and are dropped instead of
+  re-running PreLoginEvent, RSA decrypts, and Mojang calls. A plugin exception
+  in the pre-login stage closes the connection instead of holding the slot
+  until read-timeout.
+- **Handshake sanity:** empty hostnames, port 0, and control characters are
+  dropped before any lookup, event, or backend ping. Validation runs on the
+  cleaned host, so BungeeGuard/legacy-forwarding (`host\0...`) and Forge
+  suffixes keep working.
+- **Status ping:** `StatusPing` without a preceding `StatusRequest` is dropped
+  (legitimate clients always request first), and pings consume the same
+  per-source status budget as requests.
+- **BungeeCord channel:** backend-driven `Forward`/`ForwardToPlayer` fan-out has
+  a generous per-player fuse (10/s, burst 30; excess shed and counted as
+  `BACKEND_RATE_LIMITED`), and backend kick/chat text over 8192 chars is
+  ignored instead of deserialized. No legitimate subchannel is denied.
+- **GameSpy query:** challenges are keyed by full socket address (IP + port),
+  STAT replies have a per-sender fuse (4/s, burst 8; excess dropped silently,
+  so no reflector gain). The query brand reports `ShyamVelocity`.
+- **Timeouts:** negative `connection-timeout`/`read-timeout` fail startup;
+  `read-timeout = 0` starts but warns that the slowloris guard is off.
 
 ## What is intentionally unchanged
 

@@ -33,6 +33,7 @@ import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataInput;
 import com.velocitypowered.proxy.protocol.util.ByteBufDataOutput;
 import com.velocitypowered.proxy.security.SecurityMetrics;
+import com.velocitypowered.proxy.security.TokenBucket;
 import com.velocitypowered.proxy.server.VelocityRegisteredServer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.netty.buffer.ByteBuf;
@@ -61,8 +62,25 @@ public class BungeeCordMessageResponder {
   private static final LegacyChannelIdentifier LEGACY_CHANNEL =
       new LegacyChannelIdentifier("BungeeCord");
 
+  /**
+   * Fuse on backend-driven fan-out ({@code Forward}/{@code ForwardToPlayer}): a single
+   * backend message can rebroadcast to every server, so line-rate abuse is shed here.
+   * The budget (10/s sustained, 30 burst) is orders of magnitude above legitimate
+   * plugin use; only floods ever trip it, and nothing is denied by default.
+   */
+  private static final int FORWARD_PER_SECOND = 10;
+  private static final int FORWARD_BURST = 30;
+
+  /**
+   * Cap on kick/chat text accepted from a backend through this channel. Legitimate
+   * kicks and broadcasts are short; anything larger is hostile or broken input
+   * whose deserialization cost is not worth paying.
+   */
+  private static final int MAX_BACKEND_TEXT_CHARS = 8192;
+
   private final VelocityServer proxy;
   private final ConnectedPlayer player;
+  private final TokenBucket forwardFuse = TokenBucket.perSecond(FORWARD_PER_SECOND, FORWARD_BURST);
 
   BungeeCordMessageResponder(VelocityServer proxy, ConnectedPlayer player) {
     this.proxy = proxy;
@@ -185,6 +203,10 @@ public class BungeeCordMessageResponder {
       ComponentSerializer<Component, ?, String> serializer) {
     String target = in.readUTF();
     String message = in.readUTF();
+    if (message.length() > MAX_BACKEND_TEXT_CHARS) {
+      proxy.getSecurityMetrics().record(SecurityMetrics.Reason.MALFORMED_BACKEND_MESSAGE);
+      return;
+    }
 
     Component messageComponent = serializer.deserialize(message);
     if (target.equals("ALL")) {
@@ -258,6 +280,10 @@ public class BungeeCordMessageResponder {
   private void processKick(ByteBufDataInput in) {
     proxy.getPlayer(in.readUTF()).ifPresent(player -> {
       String kickReason = in.readUTF();
+      if (kickReason.length() > MAX_BACKEND_TEXT_CHARS) {
+        proxy.getSecurityMetrics().record(SecurityMetrics.Reason.MALFORMED_BACKEND_MESSAGE);
+        return;
+      }
       player.disconnect(LegacyComponentSerializer.legacySection().deserialize(kickReason));
     });
   }
@@ -265,6 +291,10 @@ public class BungeeCordMessageResponder {
   private void processKickRaw(ByteBufDataInput in) {
     proxy.getPlayer(in.readUTF()).ifPresent(player -> {
       String kickReason = in.readUTF();
+      if (kickReason.length() > MAX_BACKEND_TEXT_CHARS) {
+        proxy.getSecurityMetrics().record(SecurityMetrics.Reason.MALFORMED_BACKEND_MESSAGE);
+        return;
+      }
       player.disconnect(GsonComponentSerializer.gson().deserialize(kickReason));
     });
   }
@@ -272,6 +302,10 @@ public class BungeeCordMessageResponder {
   private void processForwardToPlayer(ByteBufDataInput in) {
     Optional<Player> player = proxy.getPlayer(in.readUTF());
     if (player.isPresent()) {
+      if (!forwardFuse.tryConsume()) {
+        proxy.getSecurityMetrics().record(SecurityMetrics.Reason.BACKEND_RATE_LIMITED);
+        return;
+      }
       ByteBuf toForward = in.unwrap().copy();
       sendServerResponse((ConnectedPlayer) player.get(), toForward);
     }
@@ -279,6 +313,10 @@ public class BungeeCordMessageResponder {
 
   private void processForwardToServer(ByteBufDataInput in) {
     String target = in.readUTF();
+    if (!forwardFuse.tryConsume()) {
+      proxy.getSecurityMetrics().record(SecurityMetrics.Reason.BACKEND_RATE_LIMITED);
+      return;
+    }
     ByteBuf toForward = in.unwrap().copy();
     final ServerInfo currentUserServer = player.getCurrentServer()
         .map(ServerConnection::getServerInfo).orElse(null);

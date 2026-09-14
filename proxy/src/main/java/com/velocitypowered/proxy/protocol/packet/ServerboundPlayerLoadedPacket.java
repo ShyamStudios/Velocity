@@ -47,4 +47,10 @@ public class ServerboundPlayerLoadedPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Empty packet: only the packet id is written by the encoder.
+    return 0;
+  }
 }

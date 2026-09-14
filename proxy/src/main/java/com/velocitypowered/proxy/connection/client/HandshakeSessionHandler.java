@@ -40,6 +40,7 @@ import com.velocitypowered.proxy.protocol.packet.LegacyDisconnect;
 import com.velocitypowered.proxy.protocol.packet.LegacyHandshakePacket;
 import com.velocitypowered.proxy.protocol.packet.LegacyPingPacket;
 import com.velocitypowered.proxy.security.ConnectionRateLimiter;
+import com.velocitypowered.proxy.security.SecurityMetrics;
 import io.netty.buffer.ByteBuf;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -88,6 +89,14 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(final HandshakePacket handshake) {
+    if (!isSaneHandshake(handshake)) {
+      // Garbage no legitimate client sends (empty host, port 0, control
+      // characters). Count it for the attack monitor, then drop silently before
+      // any lookup, event, or backend ping.
+      server.getSecurityMetrics().record(SecurityMetrics.Reason.HANDSHAKE_REJECTED);
+      connection.close(true);
+      return true;
+    }
     final StateRegistry nextState = getStateForProtocol(handshake.getNextStatus());
     if (nextState == null) {
       LOGGER.error("{} provided invalid protocol {}", this, handshake.getNextStatus());
@@ -195,6 +204,37 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
       // hostname token.
       return ConnectionTypes.VANILLA;
     }
+  }
+
+  /**
+   * Rejects handshake values no legitimate client sends. The hostname is validated
+   * <em>after</em> {@link #cleanVhost} stripping, so BungeeGuard/legacy-forwarding
+   * ({@code host\0uuid...}) and Forge ({@code host\0FML...}) suffixes keep working —
+   * only the real host part must be a non-empty, control-character-free name, and
+   * the port must be non-zero (vanilla always sends the actual port).
+   *
+   * @param handshake the handshake to check
+   * @return {@code false} when the handshake must be dropped
+   */
+  private static boolean isSaneHandshake(final HandshakePacket handshake) {
+    if (handshake == null || handshake.getPort() == 0) {
+      return false;
+    }
+    final String host = handshake.getServerAddress();
+    if (host == null) {
+      return false;
+    }
+    final String cleaned = cleanVhost(host);
+    if (cleaned.isEmpty()) {
+      return false;
+    }
+    for (int i = 0; i < cleaned.length(); i++) {
+      final char c = cleaned.charAt(i);
+      if (c < 0x20 || c == 0x7F) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

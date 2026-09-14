@@ -207,6 +207,12 @@ public class ClientSettingsPacket implements MinecraftPacket {
   }
 
   @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Locale string plus a handful of small flags.
+    return ProtocolUtils.stringSizeHint(locale) + 16;
+  }
+
+  @Override
   public int decodeExpectedMaxLength(ByteBuf buf, ProtocolUtils.Direction direction, ProtocolVersion version) {
     return 1 + ByteBufUtil.utf8MaxBytes(16) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
   }

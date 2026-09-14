@@ -36,6 +36,13 @@ public class MinecraftVarintLengthEncoder extends MessageToMessageEncoder<ByteBu
 
   static final boolean IS_JAVA_CIPHER = Natives.cipher.get() == JavaVelocityCipher.FACTORY;
 
+  /**
+   * Packets at or below this size take the single-buffer path: one allocation and one
+   * list entry instead of a length buffer plus a retained slice (gathering write).
+   * Larger packets keep the zero-copy two-buffer path so big payloads are never copied.
+   */
+  static final int SINGLE_BUFFER_LIMIT = 256;
+
   private MinecraftVarintLengthEncoder() {
   }
 
@@ -44,6 +51,18 @@ public class MinecraftVarintLengthEncoder extends MessageToMessageEncoder<ByteBu
       List<Object> list) throws Exception {
     final int length = buf.readableBytes();
     final int varintLength = ProtocolUtils.varIntBytes(length);
+
+    if (length <= SINGLE_BUFFER_LIMIT) {
+      // Fast path for the common small packets (keepalive, chat, position...).
+      // The input buffer is released by the encoder framework after this call.
+      final ByteBuf out = IS_JAVA_CIPHER
+          ? ctx.alloc().heapBuffer(varintLength + length)
+          : ctx.alloc().directBuffer(varintLength + length);
+      ProtocolUtils.writeVarInt(out, length);
+      out.writeBytes(buf);
+      list.add(out);
+      return;
+    }
 
     final ByteBuf lenBuf = IS_JAVA_CIPHER
         ? ctx.alloc().heapBuffer(varintLength)

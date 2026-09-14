@@ -178,4 +178,10 @@ public class ServerLoginPacket implements MinecraftPacket {
   public boolean handle(MinecraftSessionHandler handler) {
     return handler.handle(this);
   }
+
+  @Override
+  public int encodeSizeHint(ProtocolUtils.Direction direction, ProtocolVersion version) {
+    // Username plus UUID/key material on newer versions.
+    return ProtocolUtils.stringSizeHint(username) + 64;
+  }
 }

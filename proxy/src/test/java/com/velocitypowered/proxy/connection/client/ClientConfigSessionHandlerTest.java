@@ -70,7 +70,7 @@ class ClientConfigSessionHandlerTest {
 
     ServerboundCustomClickActionPacket pkt = makePacket();
     assertTrue(handler.handle(pkt));
-    verify(backend).write(pkt);
+    verify(backend).writeVoid(pkt);
     ReferenceCountUtil.release(pkt);
   }
 
@@ -83,7 +83,7 @@ class ClientConfigSessionHandlerTest {
 
     ServerboundCustomClickActionPacket pkt = makePacket();
     assertTrue(handler.handle(pkt));
-    verify(backend).write(pkt);
+    verify(backend).writeVoid(pkt);
     ReferenceCountUtil.release(pkt);
   }
 
@@ -113,7 +113,7 @@ class ClientConfigSessionHandlerTest {
 
     // retain() was called (+1) before write
     assertEquals(refBefore + 1, pkt.refCnt());
-    verify(backend).write(pkt);
+    verify(backend).writeVoid(pkt);
     ReferenceCountUtil.release(pkt);
   }
 }
