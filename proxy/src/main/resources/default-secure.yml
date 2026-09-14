@@ -41,3 +41,28 @@ status-requests-burst-per-ip: 10
 abuse-penalty-threshold: 10
 abuse-window-seconds: 60
 abuse-penalty-seconds: 30
+
+# Discord webhook for attack alerts. Empty disables webhooks (file fallback still
+# works). Paste your https://discord.com/api/webhooks/... URL here. The URL is
+# never logged. When an attack starts you get an instant "attack detected" ping;
+# when it ends you get a summary (duration, blocked count per attack type, peak
+# block rate, CPU spike). If Discord cannot be reached, the same report is saved
+# as a file under attack-report-dir instead.
+discord-webhook-url: ""
+attack-notify-start: true
+attack-notify-end: true
+
+# An attack is declared when attack-detect-threshold blocked events (connections,
+# logins, pings, malformed packets...) pile up within attack-detect-window-seconds.
+# Lower this on small servers, raise it if flash crowds trigger false positives.
+attack-detect-threshold: 100
+attack-detect-window-seconds: 30
+
+# The attack is considered over after attack-end-quiet-seconds with almost no new
+# blocks. Then the summary report is sent.
+attack-end-quiet-seconds: 60
+
+# Directory (relative to the working dir) where attack reports are saved when
+# Discord delivery fails — and always for the end-of-attack summary if you want
+# a local audit trail. Files are named attack-yyyyMMdd-HHmmss-<type>.json.
+attack-report-dir: "attack-reports"

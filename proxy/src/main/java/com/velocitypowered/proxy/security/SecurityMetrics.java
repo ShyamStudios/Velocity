@@ -124,6 +124,33 @@ public final class SecurityMetrics {
   }
 
   /**
+   * Returns a point-in-time copy of every counter. Used by the attack monitor to
+   * diff blocked-event rates without exposing the live atomics.
+   *
+   * @return snapshot of all reason counts
+   */
+  public EnumMap<Reason, Long> snapshot() {
+    final EnumMap<Reason, Long> copy = new EnumMap<>(Reason.class);
+    for (final Reason reason : Reason.values()) {
+      copy.put(reason, counters.get(reason).get());
+    }
+    return copy;
+  }
+
+  /**
+   * Returns the total number of blocked/rejected events across all reasons.
+   *
+   * @return total blocked count
+   */
+  public long totalBlocked() {
+    long total = 0;
+    for (final AtomicLong counter : counters.values()) {
+      total += counter.get();
+    }
+    return total;
+  }
+
+  /**
    * Returns how many log lines were suppressed by throttling.
    *
    * @return suppressed log line count

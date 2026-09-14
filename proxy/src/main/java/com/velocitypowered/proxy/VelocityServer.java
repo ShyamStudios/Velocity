@@ -64,7 +64,9 @@ import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.util.FaviconSerializer;
 import com.velocitypowered.proxy.protocol.util.GameProfileSerializer;
 import com.velocitypowered.proxy.scheduler.VelocityScheduler;
+import com.velocitypowered.proxy.security.AttackMonitor;
 import com.velocitypowered.proxy.security.ConnectionRateLimiter;
+import com.velocitypowered.proxy.security.DiscordWebhookSender;
 import com.velocitypowered.proxy.security.SecurityConfig;
 import com.velocitypowered.proxy.security.SecurityMetrics;
 import com.velocitypowered.proxy.server.ServerMap;
@@ -178,6 +180,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   private @MonotonicNonNull SecurityConfig securityConfig;
   private @MonotonicNonNull ConnectionRateLimiter connectionRateLimiter;
   private final SecurityMetrics securityMetrics = new SecurityMetrics();
+  private @MonotonicNonNull DiscordWebhookSender discordSender;
+  private @MonotonicNonNull AttackMonitor attackMonitor;
   private @MonotonicNonNull Ratelimiter<UUID> commandRateLimiter;
   private @MonotonicNonNull Ratelimiter<UUID> tabCompleteRateLimiter;
   private final VelocityEventManager eventManager;
@@ -435,6 +439,13 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
         System.exit(1);
       }
       connectionRateLimiter = new ConnectionRateLimiter(securityConfig, securityMetrics);
+      if (discordSender == null) {
+        discordSender = new DiscordWebhookSender(securityConfig.getDiscordWebhookUrl());
+        attackMonitor = new AttackMonitor(securityMetrics, securityConfig, discordSender);
+        attackMonitor.start();
+      } else {
+        attackMonitor.updateConfig(securityConfig);
+      }
 
       commandManager.setAnnounceProxyCommands(configuration.isAnnounceProxyCommands());
     } catch (Exception e) {
@@ -613,6 +624,9 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     }
     this.securityConfig = newSecurity;
     this.connectionRateLimiter = new ConnectionRateLimiter(newSecurity, securityMetrics);
+    if (this.attackMonitor != null) {
+      this.attackMonitor.updateConfig(newSecurity);
+    }
     this.configuration = newConfiguration;
     eventManager.fireAndForget(new ProxyReloadEvent());
     return true;
@@ -635,6 +649,10 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
     Runnable shutdownProcess = () -> {
       logger.info("Shutting down the proxy...");
+
+      if (attackMonitor != null) {
+        attackMonitor.shutdown();
+      }
 
       // Shutdown the connection manager, this should be
       // done first to refuse new connections
@@ -765,6 +783,15 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
    */
   public @MonotonicNonNull SecurityConfig getSecurityConfig() {
     return securityConfig;
+  }
+
+  /**
+   * Returns the attack monitor that sends Discord alerts and file fallbacks.
+   *
+   * @return the monitor, or {@code null} before startup configuration has loaded
+   */
+  public @MonotonicNonNull AttackMonitor getAttackMonitor() {
+    return attackMonitor;
   }
 
   public @MonotonicNonNull Ratelimiter<UUID> getCommandRateLimiter() {

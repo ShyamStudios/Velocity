@@ -54,7 +54,8 @@ public final class SecurityConfig {
 
   /** Default configuration, used when {@code secure.yml} is absent or empty. */
   public static final SecurityConfig DEFAULT = new SecurityConfig(
-      true, 32, 10, 20, 50000, 0, 2, 4, 5, 10, 10, 60, 30);
+      true, 32, 10, 20, 50000, 0, 2, 4, 5, 10, 10, 60, 30,
+      "", true, true, 100, 30, 60, "attack-reports");
 
   private final boolean enabled;
   private final int maxConcurrentConnectionsPerIp;
@@ -69,6 +70,13 @@ public final class SecurityConfig {
   private final int abuseThreshold;
   private final int abuseWindowSeconds;
   private final int abusePenaltySeconds;
+  private final String discordWebhookUrl;
+  private final boolean attackNotifyStart;
+  private final boolean attackNotifyEnd;
+  private final int attackDetectThreshold;
+  private final int attackDetectWindowSeconds;
+  private final int attackEndQuietSeconds;
+  private final String attackReportDir;
 
   /**
    * Creates a configuration with explicit values.
@@ -100,6 +108,60 @@ public final class SecurityConfig {
       final int abuseThreshold,
       final int abuseWindowSeconds,
       final int abusePenaltySeconds) {
+    this(enabled, maxConcurrentConnectionsPerIp, maxNewConnectionsPerSecondPerIp,
+        newConnectionsBurstPerIp, maxConcurrentConnectionsGlobal,
+        maxNewConnectionsPerSecondGlobal, maxLoginAttemptsPerSecondPerIp,
+        loginAttemptsBurstPerIp, maxStatusRequestsPerSecondPerIp, statusRequestsBurstPerIp,
+        abuseThreshold, abuseWindowSeconds, abusePenaltySeconds,
+        DEFAULT.discordWebhookUrl, DEFAULT.attackNotifyStart, DEFAULT.attackNotifyEnd,
+        DEFAULT.attackDetectThreshold, DEFAULT.attackDetectWindowSeconds,
+        DEFAULT.attackEndQuietSeconds, DEFAULT.attackReportDir);
+  }
+
+  /**
+   * Creates a configuration with explicit values, including attack-alert settings.
+   *
+   * @param enabled master switch for connection-abuse protections
+   * @param maxConcurrentConnectionsPerIp simultaneous connections per source ({@code <= 0} disables)
+   * @param maxNewConnectionsPerSecondPerIp sustained new connections per source ({@code <= 0} disables)
+   * @param newConnectionsBurstPerIp burst allowance for new connections
+   * @param maxConcurrentConnectionsGlobal simultaneous connections proxy-wide ({@code <= 0} disables)
+   * @param maxNewConnectionsPerSecondGlobal sustained new connections proxy-wide ({@code <= 0} disables)
+   * @param maxLoginAttemptsPerSecondPerIp sustained login attempts per source ({@code <= 0} disables)
+   * @param loginAttemptsBurstPerIp burst allowance for login attempts
+   * @param maxStatusRequestsPerSecondPerIp sustained status requests per source ({@code <= 0} disables)
+   * @param statusRequestsBurstPerIp burst allowance for status requests
+   * @param abuseThreshold violations within the window that trigger a temporary penalty
+   * @param abuseWindowSeconds window in which violations are counted
+   * @param abusePenaltySeconds penalty duration ({@code 0} counts without penalizing)
+   * @param discordWebhookUrl Discord webhook URL for attack alerts ({@code ""} disables webhooks)
+   * @param attackNotifyStart whether to notify when an attack starts
+   * @param attackNotifyEnd whether to notify when an attack ends (summary)
+   * @param attackDetectThreshold blocked events within the window that declare an attack
+   * @param attackDetectWindowSeconds window in which blocked events are counted
+   * @param attackEndQuietSeconds quiet period with no flood before the attack is closed
+   * @param attackReportDir directory for fallback attack-report files
+   */
+  public SecurityConfig(final boolean enabled,
+      final int maxConcurrentConnectionsPerIp,
+      final int maxNewConnectionsPerSecondPerIp,
+      final int newConnectionsBurstPerIp,
+      final int maxConcurrentConnectionsGlobal,
+      final int maxNewConnectionsPerSecondGlobal,
+      final int maxLoginAttemptsPerSecondPerIp,
+      final int loginAttemptsBurstPerIp,
+      final int maxStatusRequestsPerSecondPerIp,
+      final int statusRequestsBurstPerIp,
+      final int abuseThreshold,
+      final int abuseWindowSeconds,
+      final int abusePenaltySeconds,
+      final String discordWebhookUrl,
+      final boolean attackNotifyStart,
+      final boolean attackNotifyEnd,
+      final int attackDetectThreshold,
+      final int attackDetectWindowSeconds,
+      final int attackEndQuietSeconds,
+      final String attackReportDir) {
     this.enabled = enabled;
     this.maxConcurrentConnectionsPerIp = maxConcurrentConnectionsPerIp;
     this.maxNewConnectionsPerSecondPerIp = maxNewConnectionsPerSecondPerIp;
@@ -113,6 +175,14 @@ public final class SecurityConfig {
     this.abuseThreshold = abuseThreshold;
     this.abuseWindowSeconds = abuseWindowSeconds;
     this.abusePenaltySeconds = abusePenaltySeconds;
+    this.discordWebhookUrl = discordWebhookUrl == null ? "" : discordWebhookUrl.trim();
+    this.attackNotifyStart = attackNotifyStart;
+    this.attackNotifyEnd = attackNotifyEnd;
+    this.attackDetectThreshold = attackDetectThreshold;
+    this.attackDetectWindowSeconds = attackDetectWindowSeconds;
+    this.attackEndQuietSeconds = attackEndQuietSeconds;
+    this.attackReportDir = attackReportDir == null || attackReportDir.isBlank()
+        ? "attack-reports" : attackReportDir.trim();
   }
 
   /**
@@ -178,7 +248,14 @@ public final class SecurityConfig {
         "status-requests-burst-per-ip",
         "abuse-penalty-threshold",
         "abuse-window-seconds",
-        "abuse-penalty-seconds"));
+        "abuse-penalty-seconds",
+        "discord-webhook-url",
+        "attack-notify-start",
+        "attack-notify-end",
+        "attack-detect-threshold",
+        "attack-detect-window-seconds",
+        "attack-end-quiet-seconds",
+        "attack-report-dir"));
     for (final Object key : values.keySet()) {
       if (!known.contains(String.valueOf(key))) {
         throw new IllegalArgumentException("unknown key '" + key + "'");
@@ -203,7 +280,14 @@ public final class SecurityConfig {
         getInt(values, "status-requests-burst-per-ip", DEFAULT.statusRequestsBurstPerIp),
         getInt(values, "abuse-penalty-threshold", DEFAULT.abuseThreshold),
         getInt(values, "abuse-window-seconds", DEFAULT.abuseWindowSeconds),
-        getInt(values, "abuse-penalty-seconds", DEFAULT.abusePenaltySeconds));
+        getInt(values, "abuse-penalty-seconds", DEFAULT.abusePenaltySeconds),
+        getString(values, "discord-webhook-url", DEFAULT.discordWebhookUrl),
+        getBool(values, "attack-notify-start", DEFAULT.attackNotifyStart),
+        getBool(values, "attack-notify-end", DEFAULT.attackNotifyEnd),
+        getInt(values, "attack-detect-threshold", DEFAULT.attackDetectThreshold),
+        getInt(values, "attack-detect-window-seconds", DEFAULT.attackDetectWindowSeconds),
+        getInt(values, "attack-end-quiet-seconds", DEFAULT.attackEndQuietSeconds),
+        getString(values, "attack-report-dir", DEFAULT.attackReportDir));
   }
 
   private static boolean getBool(final Map<?, ?> values, final String key,
@@ -235,6 +319,18 @@ public final class SecurityConfig {
       return (int) asLong;
     }
     throw new IllegalArgumentException("key '" + key + "' must be a number");
+  }
+
+  private static String getString(final Map<?, ?> values, final String key,
+      final String def) {
+    final Object value = values.get(key);
+    if (value == null) {
+      return def;
+    }
+    if (value instanceof String) {
+      return ((String) value).trim();
+    }
+    throw new IllegalArgumentException("key '" + key + "' must be a string");
   }
 
   /**
@@ -279,6 +375,21 @@ public final class SecurityConfig {
     }
     if (abusePenaltySeconds < 0) {
       errors.add("'abuse-penalty-seconds' must not be negative (0 counts without penalizing).");
+    }
+    if (!discordWebhookUrl.isEmpty() && !discordWebhookUrl.startsWith("https://")) {
+      errors.add("'discord-webhook-url' must be empty (disabled) or start with 'https://'.");
+    }
+    if (attackDetectThreshold < 1) {
+      errors.add("'attack-detect-threshold' must be at least 1.");
+    }
+    if (attackDetectWindowSeconds < 5) {
+      errors.add("'attack-detect-window-seconds' must be at least 5.");
+    }
+    if (attackEndQuietSeconds < 10) {
+      errors.add("'attack-end-quiet-seconds' must be at least 10.");
+    }
+    if (attackReportDir.isBlank()) {
+      errors.add("'attack-report-dir' must not be blank.");
     }
     return errors;
   }
@@ -400,6 +511,70 @@ public final class SecurityConfig {
     return abusePenaltySeconds;
   }
 
+  /**
+   * Returns the Discord webhook URL for attack alerts ({@code ""} disables webhooks).
+   * The URL itself is never logged.
+   *
+   * @return the webhook URL or empty string
+   */
+  public String getDiscordWebhookUrl() {
+    return discordWebhookUrl;
+  }
+
+  /**
+   * Returns whether an alert is sent when an attack starts.
+   *
+   * @return {@code true} if start alerts are enabled
+   */
+  public boolean isAttackNotifyStart() {
+    return attackNotifyStart;
+  }
+
+  /**
+   * Returns whether a summary is sent when an attack ends.
+   *
+   * @return {@code true} if end summaries are enabled
+   */
+  public boolean isAttackNotifyEnd() {
+    return attackNotifyEnd;
+  }
+
+  /**
+   * Returns how many blocked events within the window declare an attack.
+   *
+   * @return the detection threshold
+   */
+  public int getAttackDetectThreshold() {
+    return attackDetectThreshold;
+  }
+
+  /**
+   * Returns the window in seconds in which blocked events are counted.
+   *
+   * @return window seconds
+   */
+  public int getAttackDetectWindowSeconds() {
+    return attackDetectWindowSeconds;
+  }
+
+  /**
+   * Returns the quiet period in seconds before an attack is considered over.
+   *
+   * @return quiet seconds
+   */
+  public int getAttackEndQuietSeconds() {
+    return attackEndQuietSeconds;
+  }
+
+  /**
+   * Returns the directory for fallback attack-report files.
+   *
+   * @return the report directory
+   */
+  public String getAttackReportDir() {
+    return attackReportDir;
+  }
+
   @Override
   public String toString() {
     return "SecurityConfig{"
@@ -416,6 +591,13 @@ public final class SecurityConfig {
         + ", abuseThreshold=" + abuseThreshold
         + ", abuseWindowSeconds=" + abuseWindowSeconds
         + ", abusePenaltySeconds=" + abusePenaltySeconds
+        + ", discordWebhookConfigured=" + (!discordWebhookUrl.isEmpty())
+        + ", attackNotifyStart=" + attackNotifyStart
+        + ", attackNotifyEnd=" + attackNotifyEnd
+        + ", attackDetectThreshold=" + attackDetectThreshold
+        + ", attackDetectWindowSeconds=" + attackDetectWindowSeconds
+        + ", attackEndQuietSeconds=" + attackEndQuietSeconds
+        + ", attackReportDir='" + attackReportDir + '\''
         + '}';
   }
 }

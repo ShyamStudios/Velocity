@@ -58,6 +58,16 @@ trivial evasion by rotating the low bits while keeping unrelated networks apart.
   logging cannot be weaponized. No addresses are logged when
   `enable-player-address-logging` is off; secrets, keys, and payloads are never
   logged.
+- **Attack alerts (`discord-webhook-url`):** when blocked events within
+  `attack-detect-window-seconds` reach `attack-detect-threshold`, an instant
+  Discord alert fires with the dominant attack type (connection / login / status /
+  malformed...), current block rate, and process CPU. After
+  `attack-end-quiet-seconds` of calm, a summary follows: duration, total blocked
+  + per-type breakdown, peak block rate, CPU baseline/peak/spike. If Discord
+  delivery fails (or no webhook is set), the same report is saved under
+  `attack-report-dir` as `attack-yyyyMMdd-HHmmss-<TYPE>.json`. The webhook URL is
+  never logged. `/velocity reload` picks up new alert settings without losing
+  in-flight attack state.
 
 ## What is intentionally unchanged
 
